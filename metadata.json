@@ -1,0 +1,6 @@
+{
+  "name": "AeroTwin - Manufacturing Digital Twin & Predictive Maintenance",
+  "description": "Real-time digital twin for discrete event manufacturing units with animated conveyor item flow, sensor telemetry streams, ML failure detection, and operational optimization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
