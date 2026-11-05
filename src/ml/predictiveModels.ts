@@ -196,12 +196,12 @@ export function classifyFailureMode(
     };
   }
 
-  if (feats.currentRatio > 1.45) {
+  if (feats.currentRatio > 1.35 || sensors.motorCurrent > 13.0) {
     return {
-      predictedClass: 'Motor Stator Overcurrent & Phase Imbalance',
-      probability: 0.86,
+      predictedClass: 'Motor Stator Overcurrent & Torque Driver Fault',
+      probability: 0.94,
       contributingFeatures: [
-        { name: 'Stator Phase Current', impact: 0.68 },
+        { name: 'Stator Phase Current Spike', impact: 0.68 },
         { name: 'Thermal Dissipation Deficit', impact: 0.20 },
         { name: 'Torque Ripple', impact: 0.12 },
       ],
@@ -230,32 +230,34 @@ export function estimateRUL(
   isConveyor: boolean
 ): number {
   // Catastrophic failure thresholds:
-  // Tool flank wear >= 0.35mm (ISO 3685 limit), vibration >= 7.0 mm/s (ISO 10816 Zone D), or severe anomaly >= 0.92
-  if (toolWearIndex >= 0.35 || vibrationRms >= 7.0 || anomalyScore >= 0.92) {
+  // Tool flank wear >= 0.35mm (ISO 3685 limit), vibration >= 7.5 mm/s (ISO 10816 Zone D), or severe anomaly >= 0.95
+  if (toolWearIndex >= 0.35 || vibrationRms >= 7.5 || anomalyScore >= 0.95) {
     return 0.0;
   }
 
-  if (anomalyScore < 0.25 && toolWearIndex < 0.15 && vibrationRms < 3.0) {
-    // Healthy equipment: standard maintenance cycle (e.g. 180 to 240 operating hours)
-    return Math.round(195 - anomalyScore * 80);
+  if (anomalyScore < 0.35 && toolWearIndex < 0.28 && vibrationRms < 3.8) {
+    // Healthy equipment: standard maintenance cycle in operating hours (e.g. 170 to 230 operating hours)
+    // Ensures machining components run reliably across days during nominal simulation
+    const healthyHours = 220 - anomalyScore * 60 - (toolWearIndex / 0.35) * 40;
+    return Math.round(Math.max(120, healthyHours));
   }
 
-  // Active degradation: exponential hazard degradation curve
+  // Active degradation: exponential hazard degradation curve in operating hours
   // RUL = NominalLife * (1 - AnomalyScore)^beta
-  const beta = isConveyor ? 1.8 : 2.2;
-  const baseLife = 85.0; // hours once anomaly detected
+  const beta = isConveyor ? 1.6 : 2.0;
+  const baseLife = 75.0; // hours once degradation/anomaly is active
   const degradation = Math.max(
     anomalyScore,
     toolWearIndex / 0.35, // 0.35mm is critical tool wear limit
-    (vibrationRms - 2.0) / 5.0
+    Math.max(0, vibrationRms - 2.5) / 5.0
   );
 
   if (degradation >= 1.0) {
     return 0.0;
   }
   
-  const rawRul = baseLife * Math.pow(Math.max(0.0, 1.0 - degradation), beta);
-  return Number(Math.max(0.0, rawRul).toFixed(1));
+  const rawRul = baseLife * Math.pow(Math.max(0.01, 1.0 - degradation), beta);
+  return Number(Math.max(1.0, rawRul).toFixed(1));
 }
 
 /**

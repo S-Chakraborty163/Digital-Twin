@@ -448,25 +448,34 @@ function drawGrid(ctx: CanvasRenderingContext2D, viewMode: 'physical' | 'simulin
 
     // Between RM1 & RM2
     ctx.beginPath();
-    ctx.moveTo(30, 200);
-    ctx.lineTo(1160, 200);
+    ctx.moveTo(30, 195);
+    ctx.lineTo(1155, 195);
     ctx.stroke();
 
     // Between RM2 & RM3
     ctx.beginPath();
-    ctx.moveTo(30, 370);
-    ctx.lineTo(1160, 370);
+    ctx.moveTo(30, 365);
+    ctx.lineTo(1155, 365);
     ctx.stroke();
 
     ctx.setLineDash([]);
 
     // Lane Labels
-    ctx.fillStyle = '#475569';
+    ctx.fillStyle = '#64748b';
     ctx.font = 'bold 12px monospace';
-    ctx.fillText('LINE 1 (RM1 - LATHE / SHAFT CELL)', 40, 45);
-    ctx.fillText('LINE 2 (RM2 - MILLING / HOUSING CELL)', 40, 215);
-    ctx.fillText('LINE 3 (RM3 - SHAPING / GEAR CELL)', 40, 385);
-    ctx.fillText('MERGE & FINAL PACKAGING SYSTEM', 1220, 215);
+    ctx.fillText('LINE 1 (RM1 - LATHE / SHAFT CELL)', 40, 40);
+    ctx.fillText('LINE 2 (RM2 - MILLING / HOUSING CELL)', 40, 210);
+    ctx.fillText('LINE 3 (RM3 - SHAPING / GEAR CELL)', 40, 380);
+
+    // Dedicated enclosure card for Merge & Final Packaging System
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(1160, 50, 1000, 485);
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(1160, 50, 1000, 26);
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('MERGE & FINAL PACKAGING SYSTEM (SYNCHRONOUS MERGE → ASSEMBLY → OUTBOUND)', 1175, 67);
   }
 }
 
@@ -526,9 +535,9 @@ function drawConveyorsAndConnections(
 
     // Direct horizontal ports into and out of converge_join
     if (toId === 'converge_join') {
-      endY = startY; // Line 1 (134), Line 2 (304), Line 3 (474) enter horizontally
+      endY = startY; // Line 1 (124), Line 2 (294), Line 3 (464) enter horizontally
     } else if (fromId === 'converge_join') {
-      startY = endY; // Center output exits horizontally at 306 directly into final assembly
+      startY = endY; // Center output exits horizontally at 294 directly into final assembly
     }
 
     ctx.save();
@@ -696,7 +705,7 @@ function drawPhysicalStation(
     ctx.strokeRect(x + 18, y + 12, 28, 24);
   } else if (type === 'converge_join') {
     // 3-to-1 Industrial Synchronous Combiner Module
-    const ports = [134, 304, 474];
+    const ports = [124, 294, 464];
     for (let i = 0; i < ports.length; i++) {
       const py = ports[i];
       // Intake port notch on left edge
@@ -714,26 +723,26 @@ function drawPhysicalStation(
       ctx.lineTo(x + 6, py + 5);
       ctx.fill();
 
-      // Convergence guide line into center output (304)
+      // Convergence guide line into center output (294)
       ctx.strokeStyle = 'rgba(56, 189, 248, 0.25)';
       ctx.setLineDash([2, 3]);
       ctx.beginPath();
       ctx.moveTo(x + 16, py);
-      ctx.lineTo(x + width - 6, 304);
+      ctx.lineTo(x + width - 6, 294);
       ctx.stroke();
       ctx.setLineDash([]);
     }
 
-    // Center output nozzle on right edge (at Line 2 level: 304)
+    // Center output nozzle on right edge (at Final Assembly level: 294)
     ctx.fillStyle = '#0284c7';
-    ctx.fillRect(x + width - 12, 304 - 14, 10, 28);
+    ctx.fillRect(x + width - 12, 294 - 14, 10, 28);
     ctx.strokeStyle = '#38bdf8';
-    ctx.strokeRect(x + width - 12, 304 - 14, 10, 28);
+    ctx.strokeRect(x + width - 12, 294 - 14, 10, 28);
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.moveTo(x + width - 9, 304 - 6);
-    ctx.lineTo(x + width - 4, 304);
-    ctx.lineTo(x + width - 9, 304 + 6);
+    ctx.moveTo(x + width - 9, 294 - 6);
+    ctx.lineTo(x + width - 4, 294);
+    ctx.lineTo(x + width - 9, 294 + 6);
     ctx.fill();
 
     // Central Combiner core badge
@@ -741,22 +750,34 @@ function drawPhysicalStation(
     ctx.strokeStyle = '#0284c7';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(x + 6, 304 - 24, width - 12, 48, 4);
+    ctx.roundRect(x + 6, 294 - 24, width - 12, 48, 4);
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = '#38bdf8';
     ctx.font = 'bold 8px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('SYNC', x + width / 2, 304 - 7);
-    ctx.fillText('3:1', x + width / 2, 304 + 4);
+    ctx.fillText('SYNC', x + width / 2, 294 - 7);
+    ctx.fillText('3:1', x + width / 2, 294 + 4);
     ctx.fillStyle = '#94a3b8';
     ctx.font = '7px monospace';
-    ctx.fillText('MERGE', x + width / 2, 304 + 15);
+    ctx.fillText('MERGE', x + width / 2, 294 + 15);
   }
 
-  // Shift closed dark overlay over station
-  if (isShiftClosed) {
+  // User Emergency Stop / Manual Component Halted Overlay
+  if (st.isManuallyStopped) {
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.45)';
+    ctx.beginPath();
+    ctx.roundRect(x + 1, y + 1, width - 2, height - 2, 6);
+    ctx.fill();
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#fee2e2';
+    ctx.font = 'bold 8.5px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('HALTED', x + width / 2, y + height / 2 + 3);
+  } else if (isShiftClosed) {
     ctx.fillStyle = 'rgba(15, 23, 42, 0.65)';
     ctx.beginPath();
     ctx.roundRect(x + 1, y + 1, width - 2, height - 2, 6);
@@ -913,8 +934,8 @@ function drawSimulinkBlock(
     ctx.fill();
     ctx.stroke();
 
-    // 3 input port indicators on left at 134, 304, 474
-    const portYs = [134, 304, 474];
+    // 3 input port indicators on left at 124, 294, 464
+    const portYs = [124, 294, 464];
     for (const py of portYs) {
       ctx.fillStyle = '#64748b';
       ctx.beginPath();
@@ -924,22 +945,22 @@ function drawSimulinkBlock(
       ctx.fill();
     }
 
-    // Output port chevron on right at 304
+    // Output port chevron on right at 294
     ctx.fillStyle = '#38bdf8';
     ctx.beginPath();
-    ctx.moveTo(x + width - 7, 304 - 4);
-    ctx.lineTo(x + width - 2, 304);
-    ctx.lineTo(x + width - 7, 304 + 4);
+    ctx.moveTo(x + width - 7, 294 - 4);
+    ctx.lineTo(x + width - 2, 294);
+    ctx.lineTo(x + width - 7, 294 + 4);
     ctx.fill();
 
     // Symbol & Text
     ctx.fillStyle = '#38bdf8';
     ctx.font = 'bold 8px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('3:1', x + width / 2, 304 - 4);
+    ctx.fillText('3:1', x + width / 2, 294 - 4);
     ctx.fillStyle = '#94a3b8';
     ctx.font = '7px monospace';
-    ctx.fillText('JOIN', x + width / 2, 304 + 7);
+    ctx.fillText('JOIN', x + width / 2, 294 + 7);
   } else {
     // Standard SimEvents Single Server / Process Block
     ctx.beginPath();
@@ -1032,9 +1053,11 @@ function drawAnimatedEntities(
       const nextId = entity.targetStationId;
       const nextStation = nextId ? stations[nextId] : null;
       if (nextStation) {
-        const startX = currentStation.x + 10;
+        const startX = currentStation.x + 8;
         const startY = currentStation.y + currentStation.height / 2;
-        const endX = nextStation.x;
+        // If downstream station is already occupied, stop within conveyor boundary so it never overlaps the machine block edge
+        const isNextOccupied = Boolean(nextStation.currentProcessingEntityId && nextStation.currentProcessingEntityId !== entity.id);
+        const endX = isNextOccupied ? (currentStation.x + currentStation.width - 8) : nextStation.x;
         const endY = nextStation.y + nextStation.height / 2;
 
         const t = Math.min(1.0, Math.max(0.0, entity.positionRatio));

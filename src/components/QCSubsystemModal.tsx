@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Station } from '../types/factory';
+import { Station, QCDefectAuditRecord } from '../types/factory';
 import {
   X,
   CheckCircle2,
@@ -14,6 +14,9 @@ import {
   Percent,
   Activity,
   Image as ImageIcon,
+  FileSpreadsheet,
+  Table,
+  Filter,
 } from 'lucide-react';
 
 interface QCSubsystemModalProps {
@@ -31,7 +34,8 @@ export const QCSubsystemModal: React.FC<QCSubsystemModalProps> = ({
   selectedQCId,
   onSelectQCId,
 }) => {
-  const [activeTab, setActiveTab] = useState<'interactive' | 'reference_screenshot'>('interactive');
+  const [activeTab, setActiveTab] = useState<'interactive' | 'defect_audit' | 'reference_screenshot'>('interactive');
+  const [actionFilter, setActionFilter] = useState<'ALL' | 'SCRAPPED' | 'REWORKED'>('ALL');
 
   if (!isOpen) return null;
 
@@ -123,6 +127,17 @@ export const QCSubsystemModal: React.FC<QCSubsystemModalProps> = ({
             >
               <Activity className="w-3.5 h-3.5" />
               Live Subsystem Schematic & Flow
+            </button>
+            <button
+              onClick={() => setActiveTab('defect_audit')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                activeTab === 'defect_audit'
+                  ? 'bg-slate-800 text-cyan-300 border border-cyan-500/40'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Table className="w-3.5 h-3.5 text-amber-400" />
+              Scrap & Rework Audit Ledger ({qc.defectAuditLog?.length ?? 0})
             </button>
             <button
               onClick={() => setActiveTab('reference_screenshot')}
@@ -391,9 +406,175 @@ export const QCSubsystemModal: React.FC<QCSubsystemModalProps> = ({
                   </p>
                 </div>
               </div>
+
+              {/* Defect Scrap & Rework Audit Log (RM ID, Standard & Margin vs Standard) */}
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Table className="w-4 h-4 text-amber-400" />
+                    <span className="font-bold text-white text-xs">
+                      QC Scrap & Rework Audit Log (RM ID, Standard Spec & Deviation Margin)
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('defect_audit')}
+                    className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold underline flex items-center gap-1"
+                  >
+                    View All Entries ({(qc.defectAuditLog || []).length}) →
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto rounded-lg border border-slate-800">
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="bg-slate-900 text-slate-400 uppercase tracking-wider text-[10px]">
+                      <tr>
+                        <th className="py-2 px-3">RM ID</th>
+                        <th className="py-2 px-3">Disposition</th>
+                        <th className="py-2 px-3">Stage</th>
+                        <th className="py-2 px-3">Standard Set</th>
+                        <th className="py-2 px-3">Measured Value</th>
+                        <th className="py-2 px-3">Deviation Margin vs Standard</th>
+                        <th className="py-2 px-3">Reason / Engineering Notes</th>
+                        <th className="py-2 px-3">Timestamp</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono">
+                      {(qc.defectAuditLog || []).slice(0, 5).map(record => (
+                        <tr key={record.id} className="hover:bg-slate-900/50">
+                          <td className="py-2 px-3 font-bold text-cyan-300">{record.itemId}</td>
+                          <td className="py-2 px-3">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                record.action === 'SCRAPPED'
+                                  ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                                  : 'bg-amber-950 text-amber-300 border border-amber-800'
+                              }`}
+                            >
+                              {record.action}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-slate-300">{record.stage}</td>
+                          <td className="py-2 px-3 text-slate-400">{record.standardValue}</td>
+                          <td className="py-2 px-3 text-slate-200">{record.measuredValue}</td>
+                          <td className="py-2 px-3 font-semibold text-rose-300">{record.deviationMargin}</td>
+                          <td className="py-2 px-3 font-sans text-slate-400 max-w-xs truncate">{record.reason}</td>
+                          <td className="py-2 px-3 text-slate-500">{record.timestampStr}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </>
+          ) : activeTab === 'defect_audit' ? (
+            /* Dedicated Tab: Full Defect Scrap & Rework Audit Ledger */
+            <div className="space-y-4">
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <Table className="w-4 h-4 text-cyan-400" />
+                      Defect Scrap & Rework Audit Ledger (RM ID & Margin vs Standard)
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Tracks every raw material workpiece scrapped or reworked, exact measurement deviation against quality standard, and corrective disposition.
+                    </p>
+                  </div>
+
+                  {/* Filter Pills */}
+                  <div className="flex items-center gap-1.5 bg-slate-900 p-1 rounded-lg border border-slate-800">
+                    <button
+                      onClick={() => setActionFilter('ALL')}
+                      className={`px-2.5 py-1 rounded text-[11px] font-semibold transition ${
+                        actionFilter === 'ALL'
+                          ? 'bg-cyan-600 text-white font-bold'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      All ({(qc.defectAuditLog || []).length})
+                    </button>
+                    <button
+                      onClick={() => setActionFilter('SCRAPPED')}
+                      className={`px-2.5 py-1 rounded text-[11px] font-semibold transition ${
+                        actionFilter === 'SCRAPPED'
+                          ? 'bg-rose-700 text-white font-bold'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Scrapped ({((qc.defectAuditLog || []).filter(r => r.action === 'SCRAPPED')).length})
+                    </button>
+                    <button
+                      onClick={() => setActionFilter('REWORKED')}
+                      className={`px-2.5 py-1 rounded text-[11px] font-semibold transition ${
+                        actionFilter === 'REWORKED'
+                          ? 'bg-amber-600 text-white font-bold'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Reworked ({((qc.defectAuditLog || []).filter(r => r.action === 'REWORKED')).length})
+                    </button>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-lg border border-slate-800">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-900 text-slate-400 uppercase tracking-wider text-[10px]">
+                      <tr>
+                        <th className="py-2.5 px-3">Material ID</th>
+                        <th className="py-2.5 px-3">Part Type</th>
+                        <th className="py-2.5 px-3">Disposition</th>
+                        <th className="py-2.5 px-3">Inspection Stage</th>
+                        <th className="py-2.5 px-3">Standard Spec</th>
+                        <th className="py-2.5 px-3">Measured Value</th>
+                        <th className="py-2.5 px-3">Deviation Margin</th>
+                        <th className="py-2.5 px-3">Root Cause / Engineering Note</th>
+                        <th className="py-2.5 px-3">Timestamp</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono">
+                      {(qc.defectAuditLog || [])
+                        .filter(r => actionFilter === 'ALL' || r.action === actionFilter)
+                        .map(record => (
+                          <tr key={record.id} className="hover:bg-slate-900/60 transition">
+                            <td className="py-2.5 px-3 font-bold text-cyan-300">{record.itemId}</td>
+                            <td className="py-2.5 px-3 font-sans text-slate-300">
+                              {record.rmType === 'RM1'
+                                ? 'RM1 (Bar Stock)'
+                                : record.rmType === 'RM2'
+                                ? 'RM2 (Casting Housing)'
+                                : 'RM3 (Gear Blank)'}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold inline-flex items-center gap-1 ${
+                                  record.action === 'SCRAPPED'
+                                    ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                                    : 'bg-amber-950 text-amber-300 border border-amber-800'
+                                }`}
+                              >
+                                {record.action === 'SCRAPPED' ? (
+                                  <Trash2 className="w-3 h-3 text-rose-400" />
+                                ) : (
+                                  <RotateCcw className="w-3 h-3 text-amber-400" />
+                                )}
+                                {record.action}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-300 font-sans">{record.stage}</td>
+                            <td className="py-2.5 px-3 text-slate-400">{record.standardValue}</td>
+                            <td className="py-2.5 px-3 font-bold text-slate-200">{record.measuredValue}</td>
+                            <td className="py-2.5 px-3 font-semibold text-rose-300">{record.deviationMargin}</td>
+                            <td className="py-2.5 px-3 font-sans text-slate-400 max-w-sm">{record.reason}</td>
+                            <td className="py-2.5 px-3 text-slate-500">{record.timestampStr}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           ) : (
-            /* Tab 2: Original Subsystem Screenshot Validation */
+            /* Tab 3: Original Subsystem Screenshot Validation */
             <div className="space-y-4">
               <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
                 <div className="flex items-center justify-between mb-2">

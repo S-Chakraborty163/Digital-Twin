@@ -96,6 +96,22 @@ export interface MLDetectionResult {
   contributingFeatures: { name: string; impact: number }[];
 }
 
+export interface QCDefectAuditRecord {
+  id: string;
+  itemId: string; // e.g. "RM1-014", "RM2-008", "RM3-022"
+  rmType: 'RM1' | 'RM2' | 'RM3';
+  stationId: string;
+  stationName: string;
+  timestampStr: string;
+  stage: 'CHECK_I' | 'CHECK_II' | 'REWORK' | 'CHECK_III';
+  action: 'SCRAPPED' | 'REWORKED';
+  metricTested: 'DIMENSIONAL_TOLERANCE' | 'SURFACE_ROUGHNESS' | 'HARDNESS_HRC';
+  measuredValue: number;
+  standardValue: string; // e.g. "±0.020 mm", "Ra ≤ 0.80 µm", "45.0 - 50.0 HRC"
+  deviationMargin: string; // e.g. "+0.019 mm out of tolerance"
+  reason: string;
+}
+
 export interface QCSubsystemMetrics {
   check1Inspected: number;
   check1Passed: number;
@@ -109,6 +125,7 @@ export interface QCSubsystemMetrics {
   rolledThroughputYield: number; // percentage (FPY + Rework Yield)
   activeInReworkEntityId: string | null;
   reworkTimeRemaining: number;
+  defectAuditLog?: QCDefectAuditRecord[];
 }
 
 export interface PlantOperationalConfig {
@@ -140,8 +157,11 @@ export interface PlantOperationalConfig {
   humanCrewSize: number; // default 3 workers
   workerFatiguePercentage: number; // 0 - 100%
 
-  // Transporter conveyor
-  conveyorTransportTimeSeconds: number; // default 45s
+  // Transporter conveyor durations (seconds)
+  conveyorTransportTimeSeconds: number; // default 45s (outfeed packaging conveyor)
+  conveyorLatheTimeSeconds: number; // default 360s (conveyor feeding CNC lathe)
+  conveyorMillingTimeSeconds: number; // default 240s (conveyor feeding CNC milling)
+  conveyorShapingTimeSeconds: number; // default 210s (conveyor feeding CNC shaping)
 
   // Machining cycle times (in minutes)
   latheCycleTimeMinutes: number; // default 6.0 min (360s)
@@ -172,6 +192,12 @@ export interface PlantOperationalConfig {
   lunchBreakEnabled: boolean;
   lunchBreakStartHour: number; // default 13.0 (1:00 PM)
   lunchBreakDurationMinutes: number; // default 60 minutes
+
+  // Equipment Reliability & Failure Simulation Controls (User Discretion)
+  randomFailuresEnabled: boolean; // default true (whether random failure events can occur)
+  failureFrequency: 'LOW' | 'MEDIUM' | 'HIGH'; // default 'MEDIUM'
+  mtbfHours: number; // Mean Time Between Failures in operating hours (default 16.0h)
+  toolWearRateMultiplier: number; // Multiplier for tool wear degradation speed (default 1.0x, range 0.5x - 10.0x)
 }
 
 export interface Station {
@@ -212,6 +238,7 @@ export interface Station {
   cumulativeRunHours: number;
   wearPercentage: number; // 0 - 100%
   lastMaintenanceOperatingHour: number;
+  isManuallyStopped?: boolean; // User discretionary emergency stop / pause of individual component
 }
 
 export type ItemType =
@@ -236,6 +263,32 @@ export interface ItemEntity {
   qualityPassed: boolean;
   creationTime: number;
   totalCycleTime: number;
+}
+
+export interface ItemLifecycleStep {
+  stepIndex: number;
+  stationId: string;
+  stationName: string;
+  line: LineType;
+  enteredAtSimSeconds: number;
+  enteredAtClock: string;
+  exitedAtSimSeconds?: number;
+  exitedAtClock?: string;
+  durationSeconds: number;
+  status: 'COMPLETED' | 'IN_PROGRESS' | 'REWORKED' | 'SCRAPPED';
+  notes?: string;
+}
+
+export interface ItemLifecycleRecord {
+  itemId: string;
+  code: string;
+  rmType: 'RM1' | 'RM2' | 'RM3' | 'FINAL';
+  lotBatchId: string;
+  creationTimeSeconds: number;
+  creationClock: string;
+  status: 'ACTIVE_WIP' | 'COMPLETED_DISPATCH' | 'SCRAPPED_QC';
+  totalLeadTimeSeconds: number;
+  steps: ItemLifecycleStep[];
 }
 
 export interface PlantOEE {
@@ -274,5 +327,6 @@ export interface PlantSimulationState {
   totalDowntimeSeconds: number;
   config: PlantOperationalConfig;
   performanceHistory: DailyPerformanceRecord[];
+  itemLifecycleLedger?: ItemLifecycleRecord[];
 }
 

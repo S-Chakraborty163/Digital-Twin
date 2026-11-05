@@ -8,16 +8,28 @@ import {
   DailyPerformanceRecord,
   FaultType,
   ItemEntity,
+  ItemLifecycleRecord,
+  ItemLifecycleStep,
   ItemType,
   LineType,
   PlantOEE,
   PlantOperationalConfig,
   PlantSimulationState,
+  QCDefectAuditRecord,
   Station,
   StationSensors,
   StationType,
 } from '../types/factory';
 import { NOMINAL_BASELINES, runPredictivePipeline } from '../ml/predictiveModels';
+import {
+  createDefaultItemLifecycleLedger,
+  recordItemLifecycleBirth,
+  recordItemLifecycleStepTransition,
+  recordItemLifecycleStepUpdate,
+  recordItemLifecycleScrap,
+  recordItemLifecycleDispatch,
+  tickActiveLifecycleRecords,
+} from '../utils/traceabilityExport';
 
 // Layout coordinates for SVG / Canvas rendering (clean horizontal layout without subassembly)
 export interface StationLayoutMeta {
@@ -45,7 +57,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM1',
     type: 'truck_source',
     x: 50,
-    y: 110,
+    y: 100,
     width: 70,
     height: 48,
     nominalDuration: 8.0,
@@ -59,7 +71,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM1',
     type: 'truck_unloading',
     x: 210,
-    y: 110,
+    y: 100,
     width: 65,
     height: 48,
     nominalDuration: 3.5,
@@ -73,7 +85,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM1',
     type: 'inventory_fifo',
     x: 370,
-    y: 110,
+    y: 100,
     width: 65,
     height: 48,
     nominalDuration: 0,
@@ -83,17 +95,17 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
   },
   {
     id: 'transporter_rm1',
-    name: 'Transporter RM1 (45s)',
+    name: 'Transporter RM1 (Lathe - 360s)',
     simulinkTag: 'TRANSPORTER RM1',
     line: 'RM1',
     type: 'transporter',
     x: 530,
-    y: 110,
+    y: 100,
     width: 85,
     height: 48,
-    nominalDuration: 45.0,
+    nominalDuration: 360.0,
     isQueue: false,
-    description: 'Roller conveyor transport to machining center (45s)',
+    description: 'Roller conveyor transport to CNC lathe (360s)',
   },
   {
     id: 'cnc_lathe',
@@ -102,7 +114,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM1',
     type: 'cnc_lathe',
     x: 690,
-    y: 110,
+    y: 100,
     width: 75,
     height: 48,
     nominalDuration: 360.0, // 6.0 minutes
@@ -116,7 +128,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM1',
     type: 'buffer_fifo',
     x: 850,
-    y: 110,
+    y: 100,
     width: 65,
     height: 48,
     nominalDuration: 0,
@@ -131,7 +143,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM1',
     type: 'quality_control',
     x: 1010,
-    y: 110,
+    y: 100,
     width: 70,
     height: 48,
     nominalDuration: 30.0,
@@ -147,7 +159,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM2',
     type: 'truck_source',
     x: 50,
-    y: 280,
+    y: 270,
     width: 70,
     height: 48,
     nominalDuration: 8.5,
@@ -161,7 +173,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM2',
     type: 'truck_unloading',
     x: 210,
-    y: 280,
+    y: 270,
     width: 65,
     height: 48,
     nominalDuration: 3.5,
@@ -175,7 +187,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM2',
     type: 'inventory_fifo',
     x: 370,
-    y: 280,
+    y: 270,
     width: 65,
     height: 48,
     nominalDuration: 0,
@@ -185,17 +197,17 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
   },
   {
     id: 'transporter_rm2',
-    name: 'Transporter RM2 (45s)',
+    name: 'Transporter RM2 (Milling - 240s)',
     simulinkTag: 'TRANSPORTER RM2',
     line: 'RM2',
     type: 'transporter',
     x: 530,
-    y: 280,
+    y: 270,
     width: 85,
     height: 48,
-    nominalDuration: 45.0,
+    nominalDuration: 240.0,
     isQueue: false,
-    description: 'Heavy belt conveyor with tension monitoring (45s)',
+    description: 'Heavy belt conveyor transport to CNC milling (240s)',
   },
   {
     id: 'cnc_milling',
@@ -204,7 +216,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM2',
     type: 'cnc_milling',
     x: 690,
-    y: 280,
+    y: 270,
     width: 75,
     height: 48,
     nominalDuration: 240.0, // 4.0 minutes
@@ -218,7 +230,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM2',
     type: 'buffer_fifo',
     x: 850,
-    y: 280,
+    y: 270,
     width: 65,
     height: 48,
     nominalDuration: 0,
@@ -233,7 +245,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM2',
     type: 'quality_control',
     x: 1010,
-    y: 280,
+    y: 270,
     width: 70,
     height: 48,
     nominalDuration: 30.0,
@@ -249,7 +261,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM3',
     type: 'truck_source',
     x: 50,
-    y: 450,
+    y: 440,
     width: 70,
     height: 48,
     nominalDuration: 9.0,
@@ -263,7 +275,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM3',
     type: 'truck_unloading',
     x: 210,
-    y: 450,
+    y: 440,
     width: 65,
     height: 48,
     nominalDuration: 3.5,
@@ -277,7 +289,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM3',
     type: 'inventory_fifo',
     x: 370,
-    y: 450,
+    y: 440,
     width: 65,
     height: 48,
     nominalDuration: 0,
@@ -287,17 +299,17 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
   },
   {
     id: 'transporter_rm3',
-    name: 'Transporter RM3 (45s)',
+    name: 'Transporter RM3 (Shaping - 210s)',
     simulinkTag: 'TRANSPORTER RM3',
     line: 'RM3',
     type: 'transporter',
     x: 530,
-    y: 450,
+    y: 440,
     width: 85,
     height: 48,
-    nominalDuration: 45.0,
+    nominalDuration: 210.0,
     isQueue: false,
-    description: 'Magnetic indexing conveyor (45s)',
+    description: 'Slat conveyor transport to CNC shaping (210s)',
   },
   {
     id: 'cnc_shaping',
@@ -306,7 +318,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM3',
     type: 'cnc_shaping',
     x: 690,
-    y: 450,
+    y: 440,
     width: 75,
     height: 48,
     nominalDuration: 210.0, // 3.5 minutes
@@ -320,7 +332,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM3',
     type: 'buffer_fifo',
     x: 850,
-    y: 450,
+    y: 440,
     width: 65,
     height: 48,
     nominalDuration: 0,
@@ -335,7 +347,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'RM3',
     type: 'quality_control',
     x: 1010,
-    y: 450,
+    y: 440,
     width: 70,
     height: 48,
     nominalDuration: 30.0,
@@ -351,7 +363,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'MERGE',
     type: 'converge_join',
     x: 1180,
-    y: 110,
+    y: 100,
     width: 44,
     height: 388,
     nominalDuration: 1.0,
@@ -365,9 +377,9 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'FINAL',
     type: 'final_assembly',
     x: 1290,
-    y: 280,
+    y: 270,
     width: 80,
-    height: 52,
+    height: 48,
     nominalDuration: 240.0, // 4.0 minutes on average
     isQueue: false,
     description: 'Precision integration & torque fastening workstation (4.0m average)',
@@ -379,7 +391,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'FINAL',
     type: 'entity_queue',
     x: 1450,
-    y: 280,
+    y: 270,
     width: 65,
     height: 48,
     nominalDuration: 0,
@@ -394,9 +406,9 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'FINAL',
     type: 'packaging',
     x: 1610,
-    y: 280,
+    y: 270,
     width: 75,
-    height: 50,
+    height: 48,
     nominalDuration: 240.0, // 4.0 minutes
     isQueue: false,
     description: 'Carton boxing, desiccant seal & barcode labeling (4.0m)',
@@ -408,7 +420,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'FINAL',
     type: 'transporter_out',
     x: 1770,
-    y: 280,
+    y: 270,
     width: 85,
     height: 48,
     nominalDuration: 45.0,
@@ -422,7 +434,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'FINAL',
     type: 'entity_queue_out',
     x: 1930,
-    y: 280,
+    y: 270,
     width: 65,
     height: 48,
     nominalDuration: 0,
@@ -437,7 +449,7 @@ export const INITIAL_STATION_METAS: StationLayoutMeta[] = [
     line: 'FINAL',
     type: 'sink_dispatch',
     x: 2080,
-    y: 280,
+    y: 270,
     width: 65,
     height: 48,
     nominalDuration: 0,
@@ -491,7 +503,10 @@ export const DEFAULT_OPERATIONAL_CONFIG: PlantOperationalConfig = {
   unloadingMode: 'MANUAL_HUMAN', // Default: humans barehand, no forklifts or cranes
   humanCrewSize: 3,
   workerFatiguePercentage: 5,
-  conveyorTransportTimeSeconds: 45, // Default 45s
+  conveyorTransportTimeSeconds: 45, // Default 45s outfeed conveyor
+  conveyorLatheTimeSeconds: 360, // Conveyor time for Lathe line (360s)
+  conveyorMillingTimeSeconds: 240, // Conveyor time for Milling line (240s)
+  conveyorShapingTimeSeconds: 210, // Conveyor time for Shaping line (210s)
   latheCycleTimeMinutes: 6.0, // Default 6 minutes (360s)
   millingCycleTimeMinutes: 4.0, // Default 4 minutes (240s)
   shapingCycleTimeMinutes: 3.5, // Default 3.5 minutes (210s)
@@ -512,6 +527,12 @@ export const DEFAULT_OPERATIONAL_CONFIG: PlantOperationalConfig = {
   lunchBreakEnabled: true,
   lunchBreakStartHour: 13.0,
   lunchBreakDurationMinutes: 60,
+
+  // Equipment Reliability & Failure Simulation Controls (User Discretion)
+  randomFailuresEnabled: true,
+  failureFrequency: 'MEDIUM',
+  mtbfHours: 16.0,
+  toolWearRateMultiplier: 1.0,
 };
 
 export function formatSimulatedClock(secondsOfDay: number, dateStr: string, dayCount: number) {
@@ -532,6 +553,15 @@ export function formatSimulatedClock(secondsOfDay: number, dateStr: string, dayC
     shiftHour: hours24 + minutes / 60,
     formattedFull: `Day ${dayCount} • ${dateStr} • ${timeStr}`,
   };
+}
+
+/**
+ * Generates initial defect scrap & rework audit records for QC Subsystem.
+ * Starts clean with an empty array so records only appear dynamically
+ * when parts actually undergo QC and experience defects during simulation.
+ */
+export function createDefaultQCDefectAuditLog(_stationId?: string): QCDefectAuditRecord[] {
+  return [];
 }
 
 /**
@@ -572,17 +602,26 @@ export function createStationFromMeta(
     reworkProcessed: 0,
     check3Passed: 0,
     check3Scrapped: 0,
-    firstPassYield: 95.0,
-    rolledThroughputYield: 98.0,
+    firstPassYield: 100,
+    rolledThroughputYield: 100,
     activeInReworkEntityId: null,
     reworkTimeRemaining: 0,
+    defectAuditLog: createDefaultQCDefectAuditLog(meta.id),
   } : undefined;
 
   let nominalDuration = meta.nominalDuration;
   if (meta.type === 'transporter') {
-    nominalDuration = config.conveyorTransportTimeSeconds;
+    if (meta.id === 'transporter_rm1') {
+      nominalDuration = config.conveyorLatheTimeSeconds ?? 360.0;
+    } else if (meta.id === 'transporter_rm2') {
+      nominalDuration = config.conveyorMillingTimeSeconds ?? 240.0;
+    } else if (meta.id === 'transporter_rm3') {
+      nominalDuration = config.conveyorShapingTimeSeconds ?? 210.0;
+    } else {
+      nominalDuration = config.conveyorTransportTimeSeconds ?? 45.0;
+    }
   } else if (meta.type === 'transporter_out') {
-    nominalDuration = 45.0; // Fixed 45s outfeed conveyor
+    nominalDuration = config.conveyorTransportTimeSeconds ?? 45.0; // Outfeed packaging conveyor
   } else if (meta.type === 'cnc_lathe') {
     nominalDuration = config.latheCycleTimeMinutes * 60;
   } else if (meta.type === 'cnc_milling') {
@@ -661,9 +700,11 @@ export function deepCloneOperationalConfig(
   return {
     ...base,
     simulatedSecondsOfDay: startHour * 3600,
+    simulatedDayCount: 1,
+    simulatedDate: DEFAULT_OPERATIONAL_CONFIG.simulatedDate,
     completedToday: 0,
-    arrearsUnits: base.arrearsUnits ?? 0,
-    completedCumulative: base.completedCumulative ?? 0,
+    arrearsUnits: 0,
+    completedCumulative: 0,
     isShiftOpen: true,
     trucks: {
       rm1: {
@@ -770,7 +811,8 @@ export function createDefaultPerformanceHistory(
  * If existingConfig is passed (e.g. on reset), custom shift & logistics parameters are preserved!
  */
 export function createInitialPlantState(
-  existingConfig?: PlantOperationalConfig
+  existingConfig?: PlantOperationalConfig,
+  initialRunning: boolean = true
 ): PlantSimulationState {
   const activeConfig = existingConfig
     ? deepCloneOperationalConfig(existingConfig)
@@ -814,7 +856,7 @@ export function createInitialPlantState(
 
   return {
     timeSeconds: 0,
-    isRunning: true,
+    isRunning: initialRunning,
     simulationSpeed: 1.0,
     stations,
     entities,
@@ -832,6 +874,7 @@ export function createInitialPlantState(
     totalDowntimeSeconds: 0,
     config: activeConfig,
     performanceHistory: initialHistory,
+    itemLifecycleLedger: createDefaultItemLifecycleLedger(),
   };
 }
 
@@ -922,7 +965,8 @@ export function updateStationSensors(
   station: Station,
   dt: number,
   isWorking: boolean,
-  isShiftOpen: boolean
+  isShiftOpen: boolean,
+  wearMultiplier: number = 1.0
 ): StationSensors {
   const current = { ...station.sensors };
   const fault = station.activeFault;
@@ -956,8 +1000,8 @@ export function updateStationSensors(
         current.acousticEmission = Math.min(54.0, 42.0 + noise * 2);
         current.temperature = Math.min(66.0, current.temperature + dt * 0.1);
       } else {
-        // Normal gradual cutting progression
-        current.toolWearIndex = Math.min(0.65, currentWear + dt * 0.00005);
+        // Progressive cutting tool wear under fault monitoring
+        current.toolWearIndex = Math.min(0.65, currentWear + (dt / 3600) * 0.02);
         const w = current.toolWearIndex;
         current.vibrationRms = Math.min(3.4, 1.8 + w * 3.5 + noise * 0.1);
         current.vibrationPeak = current.vibrationRms * 1.35;
@@ -1019,7 +1063,11 @@ export function updateStationSensors(
     case 'TORQUE_DRIVER_OUT_OF_SPEC':
     case 'PNEUMATIC_PRESSURE_DROP':
     case 'OPERATOR_ASSEMBLY_BOTTLENECK':
-      current.motorCurrent = Math.min(17.5, 12.0 + Math.random() * 4.0);
+      // Stably elevated above 13.0A to prevent erratic shifting between 86% and 97% confidence
+      current.motorCurrent = Math.min(18.5, 16.5 + (Math.random() - 0.5) * 0.4);
+      current.vibrationRms = Math.min(4.8, 3.4 + (Math.random() - 0.5) * 0.3);
+      current.acousticEmission = Math.min(36.0, 28.0 + (Math.random() - 0.5) * 0.5);
+      current.temperature = Math.min(58.0, current.temperature + dt * 0.15);
       break;
 
     case 'SEALER_HEATER_ELEMENT_FAULT':
@@ -1044,9 +1092,10 @@ export function updateStationSensors(
       current.temperature += (targetTemp - current.temperature) * 0.05 + noise * 0.1;
       current.motorCurrent += (targetCurr - current.motorCurrent) * 0.15 + noise * 0.2;
       current.acousticEmission += (nom.acousticEmission - current.acousticEmission) * 0.1 + noise * 0.3;
-      if (isCnc) {
-        // Normal tool wear progresses slowly: ~0.00003 mm per second of cutting
-        current.toolWearIndex = Math.min(0.65, (current.toolWearIndex ?? 0.04) + dt * 0.00003);
+      if (isCnc && isWorking) {
+        // Tool wear runs realistically based on operating hours (~0.0010 mm per hour of cutting, 250h cutting insert life)
+        // Scaled by user-controlled toolWearRateMultiplier parameter
+        current.toolWearIndex = Math.min(0.65, (current.toolWearIndex ?? 0.04) + (dt / 3600) * 0.0010 * wearMultiplier);
       }
       if (isConveyor) {
         current.conveyorTension = 450 + (Math.random() - 0.5) * 5;
@@ -1073,10 +1122,13 @@ export function tickSimulation(
   let entities = [...state.entities];
   let completedCount = state.completedCount;
   let rejectedCount = state.rejectedCount;
+  let ledger = state.itemLifecycleLedger ? [...state.itemLifecycleLedger] : [];
 
   // Advance simulated clock
   const config = { ...state.config };
   config.simulatedSecondsOfDay += dt;
+
+  const clockInfo = formatSimulatedClock(config.simulatedSecondsOfDay, config.simulatedDate, config.simulatedDayCount);
 
   // Check 8-hour shift status (8:00 AM to 4:00 PM by default)
   const shiftStartHour = config.shiftStartHour; // default 8
@@ -1141,6 +1193,7 @@ export function tickSimulation(
       rejectedCount,
       wipCount: entities.length,
       config,
+      itemLifecycleLedger: ledger,
     };
   }
 
@@ -1216,10 +1269,14 @@ export function tickSimulation(
         truckData.unitsLeftToUnload--;
         entityCounter++;
 
+        const itemSeq = config.dailyRmPerTruck - truckData.unitsLeftToUnload;
+        const itemCode = `${line}-${String(itemSeq).padStart(3, '0')}`;
+        const lotBatchId = `LOT-${config.simulatedDate.replace(/-/g, '')}-${line}`;
+
         // Spawn raw material entity directly into Inventory FIFO queue ONLY after arrival & unloading!
         const newEntity: ItemEntity = {
           id: `entity_${entityCounter}`,
-          code: `${line}-${entityCounter}`,
+          code: itemCode,
           type: itemType,
           line,
           currentStationId: inventoryId,
@@ -1232,6 +1289,22 @@ export function tickSimulation(
         };
 
         entities.push(newEntity);
+
+        // Record real-time arrival & inventory staging in Material Traceability Ledger
+        ledger = recordItemLifecycleBirth(
+          ledger,
+          itemCode,
+          line,
+          lotBatchId,
+          config.simulatedSecondsOfDay,
+          clockInfo.timeStr,
+          unloadingStation.id,
+          unloadingStation.name,
+          unloadPaceSeconds,
+          invStation.id,
+          invStation.name
+        );
+
         invStation.currentQueueCount++;
         unloadingStation.itemsProcessed++;
         unloadingStation.processedToday++;
@@ -1262,10 +1335,21 @@ export function tickSimulation(
   for (const { invId, transId, cncId } of lineTransporters) {
     const invStation = stations[invId];
     const transStation = stations[transId];
+    const cncStation = stations[cncId];
     const itemsOnBelt = entities.filter(e => e.currentStationId === transId);
 
-    // Conveyor can carry up to 2 items spaced out
-    const canAcceptOnBelt = itemsOnBelt.length < 2 && (itemsOnBelt.length === 0 || itemsOnBelt.every(e => e.positionRatio > 0.35));
+    // Only dispatch an entity from inventory onto the conveyor when:
+    // 1) The conveyor is empty (itemsOnBelt.length === 0)
+    // 2) AND the downstream machining component is free (!cncStation.currentProcessingEntityId)
+    // 3) AND the conveyor is operational (no fault, not in maintenance, not manually stopped)
+    const isTransporterBlocked =
+      transStation.activeFault !== 'NONE' ||
+      transStation.status === 'MAINTENANCE_REQUIRED' ||
+      transStation.isManuallyStopped === true;
+    const canAcceptOnBelt =
+      itemsOnBelt.length === 0 &&
+      !cncStation.currentProcessingEntityId &&
+      !isTransporterBlocked;
 
     if (canAcceptOnBelt && invStation.currentQueueCount > 0) {
       const queuedItem = entities.find(e => e.currentStationId === invId && !e.isProcessing);
@@ -1277,6 +1361,17 @@ export function tickSimulation(
         invStation.processedToday++;
         invStation.processedCumulative++;
         transStation.itemsProcessed++;
+
+        ledger = recordItemLifecycleStepTransition(
+          ledger,
+          queuedItem.code,
+          transStation.id,
+          transStation.name,
+          transStation.line,
+          config.simulatedSecondsOfDay,
+          clockInfo.timeStr,
+          `Conveyor belt transport towards ${cncStation.name}`
+        );
       }
     }
   }
@@ -1288,6 +1383,16 @@ export function tickSimulation(
     if (!currentStation) continue;
 
     if (currentStation.type.includes('transporter')) {
+      const isConveyorHalted =
+        currentStation.activeFault !== 'NONE' ||
+        currentStation.status === 'MAINTENANCE_REQUIRED' ||
+        currentStation.isManuallyStopped === true;
+
+      // When the conveyor gets a fault or is manually stopped, operation strictly terminates!
+      if (isConveyorHalted) {
+        continue;
+      }
+
       const slipFactor = currentStation.activeFault === 'BELT_SLIP_AND_TENSION_LOSS' ? 0.35 : 1.0;
       const speed = (1.0 / Math.max(1.0, currentStation.nominalProcessingTime)) * slipFactor;
       entity.positionRatio += speed * dt;
@@ -1303,6 +1408,17 @@ export function tickSimulation(
             nextStation.currentQueueCount++;
             currentStation.processedToday++;
             currentStation.processedCumulative++;
+
+            ledger = recordItemLifecycleStepTransition(
+              ledger,
+              entity.code,
+              nextStation.id,
+              nextStation.name,
+              nextStation.line,
+              config.simulatedSecondsOfDay,
+              clockInfo.timeStr,
+              `Arrived and queued at ${nextStation.name}`
+            );
           } else if (!nextStation.currentProcessingEntityId) {
             // Transfer into CNC machine chuck
             entity.currentStationId = nextStationId;
@@ -1313,9 +1429,20 @@ export function tickSimulation(
             entity.isProcessing = true;
             currentStation.processedToday++;
             currentStation.processedCumulative++;
+
+            ledger = recordItemLifecycleStepTransition(
+              ledger,
+              entity.code,
+              nextStation.id,
+              nextStation.name,
+              nextStation.line,
+              config.simulatedSecondsOfDay,
+              clockInfo.timeStr,
+              `Loaded into ${nextStation.name} chuck for precision processing`
+            );
           } else {
-            // Keep at head of conveyor until CNC machine chuck is free
-            entity.positionRatio = 1.0;
+            // Keep safely back on conveyor belt before machine entrance until CNC chuck is free
+            entity.positionRatio = 0.88;
           }
         }
       }
@@ -1333,12 +1460,13 @@ export function tickSimulation(
     const bufStation = stations[bufId];
     const qcStation = stations[qcId];
 
-    // Check if QC is operational, not blocked, and not in maintenance
+    // Check if QC is operational, not blocked, not manually stopped, and not in maintenance
     const isQcOperational = qcStation.status !== 'MAINTENANCE_REQUIRED' &&
                             qcStation.status !== 'BLOCKED' &&
                             qcStation.status !== 'SHIFT_CLOSED' &&
                             qcStation.status !== 'LUNCH_BREAK' &&
-                            qcStation.activeFault === 'NONE';
+                            qcStation.activeFault === 'NONE' &&
+                            !qcStation.isManuallyStopped;
 
     // When QC is in bottleneck (busy, slow, or fault/maintenance), items MUST stay in buffer queue!
     if (isQcOperational && !qcStation.currentProcessingEntityId && bufStation.currentQueueCount > 0) {
@@ -1352,6 +1480,17 @@ export function tickSimulation(
         bufStation.currentQueueCount = Math.max(0, bufStation.currentQueueCount - 1);
         bufStation.processedToday++;
         bufStation.processedCumulative++;
+
+        ledger = recordItemLifecycleStepTransition(
+          ledger,
+          itemToInspect.code,
+          qcStation.id,
+          qcStation.name,
+          qcStation.line,
+          config.simulatedSecondsOfDay,
+          clockInfo.timeStr,
+          'Transferred into Quality Control for multi-stage inspection'
+        );
       }
     }
   }
@@ -1362,18 +1501,57 @@ export function tickSimulation(
   const readyRm2 = entities.find(e => (e.currentStationId === 'qc_rm2' || e.currentStationId === 'converge_join') && !e.isProcessing && e.qualityPassed && e.line === 'RM2');
   const readyRm3 = entities.find(e => (e.currentStationId === 'qc_rm3' || e.currentStationId === 'converge_join') && !e.isProcessing && e.qualityPassed && e.line === 'RM3');
   const finalAssembly = stations['final_assembly'];
+  const isAssemblyOperational = !finalAssembly.currentProcessingEntityId &&
+                                !finalAssembly.isManuallyStopped &&
+                                finalAssembly.activeFault === 'NONE' &&
+                                finalAssembly.status !== 'MAINTENANCE_REQUIRED';
 
-  if (readyRm1 && readyRm2 && readyRm3 && !finalAssembly.currentProcessingEntityId) {
+  if (readyRm1 && readyRm2 && readyRm3 && isAssemblyOperational) {
     if (isLunchBreak && config.assemblyMode !== 'FULLY_AUTOMATED') {
       finalAssembly.status = 'LUNCH_BREAK';
     } else {
+      const oldRm1Code = readyRm1.code;
+      const rawNum = readyRm1.id.replace('entity_', '').replace('ent_', '');
+      const asyCode = `ASY-${String(rawNum).padStart(3, '0')}`;
+
       readyRm1.currentStationId = 'final_assembly';
       readyRm1.type = 'ASSEMBLED_UNIT';
       readyRm1.line = 'FINAL';
-      readyRm1.code = `ASY-${readyRm1.id.replace('entity_', '').replace('ent_', '')}`;
+      readyRm1.code = asyCode;
       readyRm1.isProcessing = true;
       finalAssembly.currentProcessingEntityId = readyRm1.id;
       finalAssembly.processingTimeRemaining = finalAssembly.nominalProcessingTime;
+
+      // Update RM2 and RM3 lifecycle records as integrated into this assembly
+      ledger = recordItemLifecycleStepUpdate(
+        ledger,
+        readyRm2.code,
+        'COMPLETED',
+        `Integrated into Final Assembly ${asyCode}`,
+        config.simulatedSecondsOfDay,
+        clockInfo.timeStr
+      );
+      ledger = recordItemLifecycleStepUpdate(
+        ledger,
+        readyRm3.code,
+        'COMPLETED',
+        `Integrated into Final Assembly ${asyCode}`,
+        config.simulatedSecondsOfDay,
+        clockInfo.timeStr
+      );
+
+      // Transition the converged workpiece into final assembly
+      ledger = recordItemLifecycleStepTransition(
+        ledger,
+        oldRm1Code,
+        finalAssembly.id,
+        finalAssembly.name,
+        'FINAL',
+        config.simulatedSecondsOfDay,
+        clockInfo.timeStr,
+        `Synchronous 3:1 merge completed (${oldRm1Code} + ${readyRm2.code} + ${readyRm3.code})`
+      );
+      ledger = ledger.map(r => r.code === oldRm1Code ? { ...r, code: asyCode, itemId: asyCode, rmType: 'FINAL' as const } : r);
 
       // Consume RM2 and RM3 items into the merged assembly
       entities = entities.filter(e => e.id !== readyRm2.id && e.id !== readyRm3.id);
@@ -1387,7 +1565,12 @@ export function tickSimulation(
   // 6. Post-Assembly Entity Queue to Packaging Dispatch
   const entityQueueStation = stations['entity_queue'];
   const packagingStation = stations['packaging'];
-  if (!packagingStation.currentProcessingEntityId && entityQueueStation.currentQueueCount > 0) {
+  const isPackagingOperational = !packagingStation.currentProcessingEntityId &&
+                                 !packagingStation.isManuallyStopped &&
+                                 packagingStation.activeFault === 'NONE' &&
+                                 packagingStation.status !== 'MAINTENANCE_REQUIRED';
+
+  if (isPackagingOperational && entityQueueStation.currentQueueCount > 0) {
     const itemToPack = entities.find(e => e.currentStationId === 'entity_queue' && !e.isProcessing);
     if (itemToPack) {
       itemToPack.currentStationId = 'packaging';
@@ -1398,6 +1581,17 @@ export function tickSimulation(
       entityQueueStation.currentQueueCount = Math.max(0, entityQueueStation.currentQueueCount - 1);
       entityQueueStation.processedToday++;
       entityQueueStation.processedCumulative++;
+
+      ledger = recordItemLifecycleStepTransition(
+        ledger,
+        itemToPack.code,
+        packagingStation.id,
+        packagingStation.name,
+        'FINAL',
+        config.simulatedSecondsOfDay,
+        clockInfo.timeStr,
+        'Packaging Station: protective foam wrapping & aerospace barcoding'
+      );
     }
   }
 
@@ -1418,6 +1612,13 @@ export function tickSimulation(
       sinkStation.itemsProcessed++;
       sinkStation.processedToday++;
       sinkStation.processedCumulative++;
+
+      ledger = recordItemLifecycleDispatch(
+        ledger,
+        itemToDispatch.code,
+        config.simulatedSecondsOfDay,
+        clockInfo.timeStr
+      );
 
       // Successfully dispatched out of plant to warehouse customer shipment
       entities = entities.filter(e => e.id !== itemToDispatch.id);
@@ -1443,21 +1644,31 @@ export function tickSimulation(
 
     if (st.type.includes('transporter')) {
       const activeItems = entities.filter(e => e.currentStationId === sId);
-      const isWorking = activeItems.length > 0;
+      const isConveyorHalted = st.activeFault !== 'NONE' || st.status === 'MAINTENANCE_REQUIRED' || st.isManuallyStopped === true;
+      const isWorking = activeItems.length > 0 && !isConveyorHalted;
       st.currentlyProcessingCount = activeItems.length;
       if (isWorking) st.busyTimeAccumulated += dt;
-      st.status = st.activeFault !== 'NONE' ? 'MAINTENANCE_REQUIRED' : isWorking ? 'BUSY' : 'IDLE';
+      st.status = isConveyorHalted ? 'MAINTENANCE_REQUIRED' : isWorking ? 'BUSY' : 'IDLE';
       st.sensors = updateStationSensors(st, dt, isWorking, true);
+      continue;
+    }
+
+    // Explicit manual stop check: if operator manually halted this machine, stop processing immediately
+    if (st.isManuallyStopped) {
+      st.status = 'MAINTENANCE_REQUIRED';
+      st.currentlyProcessingCount = st.currentProcessingEntityId ? 1 : 0;
+      st.sensors = updateStationSensors(st, dt, false, true);
+      st.mlResult = runPredictivePipeline(st.sensors, st.type, st.name);
       continue;
     }
 
     // Server / Process Stations (CNC, QC, Final Assembly, Packaging)
     const toolWear = st.sensors.toolWearIndex ?? 0;
-    const isCriticalWear = toolWear >= 0.35;
-    const isCriticalVibration = st.sensors.vibrationRms >= 7.0;
-    const isCriticalTemp = st.sensors.temperature >= 80.0;
-    const isRulZero = st.mlResult?.remainingUsefulLifeHours !== undefined && st.mlResult.remainingUsefulLifeHours <= 0;
-    const isFatalFault = st.activeFault !== 'NONE' && (st.activeFault !== 'TOOL_FLANK_WEAR' || isCriticalWear);
+    const isCriticalWear = toolWear >= 0.35 && st.activeFault !== 'NONE';
+    const isCriticalVibration = st.sensors.vibrationRms >= 7.5;
+    const isCriticalTemp = st.sensors.temperature >= 82.0;
+    const isRulZero = st.activeFault !== 'NONE' && st.mlResult?.remainingUsefulLifeHours !== undefined && st.mlResult.remainingUsefulLifeHours <= 0;
+    const isFatalFault = st.activeFault !== 'NONE' && (st.activeFault !== 'TOOL_FLANK_WEAR' || toolWear >= 0.35);
     const hasCatastrophicBreakdown = isCriticalWear || isCriticalVibration || isCriticalTemp || isRulZero || isFatalFault;
 
     if (hasCatastrophicBreakdown) {
@@ -1496,6 +1707,8 @@ export function tickSimulation(
 
         if (processedEntity) {
           processedEntity.isProcessing = false;
+          const partCode = processedEntity.code || `RM${st.line === 'RM1' ? 1 : st.line === 'RM2' ? 2 : 3}-${String(st.itemsProcessed + 1).padStart(3, '0')}`;
+          const partLine = (st.line || 'RM1') as 'RM1' | 'RM2' | 'RM3';
 
           // Quality Control 3-stage subsystem
           if (st.type === 'quality_control') {
@@ -1513,7 +1726,10 @@ export function tickSimulation(
               rolledThroughputYield: 98,
               activeInReworkEntityId: null,
               reworkTimeRemaining: 0,
+              defectAuditLog: createDefaultQCDefectAuditLog(st.id),
             };
+
+            const clockInfo = formatSimulatedClock(config.simulatedSecondsOfDay, config.simulatedDate, config.simulatedDayCount);
 
             qc.check1Inspected++;
             const check1PassThreshold = hasUpstreamFault ? 0.55 : 0.94;
@@ -1522,6 +1738,14 @@ export function tickSimulation(
             if (check1Roll < check1PassThreshold) {
               qc.check1Passed++;
               processedEntity.qualityPassed = true;
+              ledger = recordItemLifecycleStepUpdate(
+                ledger,
+                partCode,
+                'COMPLETED',
+                'QC Check I Laser Runout: PASSED (First Pass Yield)',
+                config.simulatedSecondsOfDay,
+                clockInfo.timeStr
+              );
             } else {
               qc.check1Failed++;
               const isFatalDefect = Math.random() < 0.25;
@@ -1532,19 +1756,107 @@ export function tickSimulation(
                 st.itemsRejected++;
                 rejectedCount++;
                 entities = entities.filter(e => e.id !== processedEntity.id);
+
+                const measured = partLine === 'RM1' ? 0.046 : partLine === 'RM2' ? 0.053 : 0.039;
+                const standard = partLine === 'RM1' ? '±0.020 mm' : partLine === 'RM2' ? 'Flange Flatness ±0.025 mm' : 'Involute Pitch ±0.015 mm';
+                const margin = partLine === 'RM1' ? '+0.026 mm out of tolerance' : partLine === 'RM2' ? '+0.028 mm out of tolerance' : '+0.024 mm pitch deviation';
+                const defectRec: QCDefectAuditRecord = {
+                  id: `qc-${st.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                  itemId: partCode,
+                  rmType: partLine,
+                  stationId: st.id,
+                  stationName: st.name,
+                  timestampStr: clockInfo.timeStr,
+                  stage: 'CHECK_II',
+                  action: 'SCRAPPED',
+                  metricTested: 'DIMENSIONAL_TOLERANCE',
+                  measuredValue: measured,
+                  standardValue: standard,
+                  deviationMargin: margin,
+                  reason: partLine === 'RM1' ? 'Severe shaft runout & concentricity loss' : partLine === 'RM2' ? 'Casting housing mounting flange warping' : 'Gear tooth profile angle error',
+                };
+                qc.defectAuditLog = [defectRec, ...(qc.defectAuditLog || [])];
+
+                ledger = recordItemLifecycleScrap(
+                  ledger,
+                  partCode,
+                  config.simulatedSecondsOfDay,
+                  clockInfo.timeStr,
+                  `QC Check II Scrapped: ${defectRec.reason} (${defectRec.deviationMargin})`
+                );
               } else {
                 qc.check2SentToRework++;
                 qc.reworkProcessed++;
+
+                const reworkRec: QCDefectAuditRecord = {
+                  id: `qc-${st.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                  itemId: partCode,
+                  rmType: partLine,
+                  stationId: st.id,
+                  stationName: st.name,
+                  timestampStr: clockInfo.timeStr,
+                  stage: 'REWORK',
+                  action: 'REWORKED',
+                  metricTested: 'SURFACE_ROUGHNESS',
+                  measuredValue: 1.25,
+                  standardValue: 'Ra ≤ 0.80 µm',
+                  deviationMargin: '+0.45 µm above Ra 0.80 µm threshold',
+                  reason: 'Surface roughness out of tolerance; routed to precision hone rework server',
+                };
+                qc.defectAuditLog = [reworkRec, ...(qc.defectAuditLog || [])];
+
+                ledger = recordItemLifecycleStepUpdate(
+                  ledger,
+                  partCode,
+                  'REWORKED',
+                  `QC Check II Rework: ${reworkRec.deviationMargin}`,
+                  config.simulatedSecondsOfDay,
+                  clockInfo.timeStr
+                );
+
                 const check3PassRoll = Math.random();
                 if (check3PassRoll < 0.88) {
                   qc.check3Passed++;
                   processedEntity.qualityPassed = true;
+                  ledger = recordItemLifecycleStepUpdate(
+                    ledger,
+                    partCode,
+                    'COMPLETED',
+                    'QC Check III Post-Rework Audit: PASSED (Salvaged to standard)',
+                    config.simulatedSecondsOfDay,
+                    clockInfo.timeStr
+                  );
                 } else {
                   qc.check3Scrapped++;
                   processedEntity.qualityPassed = false;
                   st.itemsRejected++;
                   rejectedCount++;
                   entities = entities.filter(e => e.id !== processedEntity.id);
+
+                  const check3ScrapRec: QCDefectAuditRecord = {
+                    id: `qc-${st.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                    itemId: partCode,
+                    rmType: partLine,
+                    stationId: st.id,
+                    stationName: st.name,
+                    timestampStr: clockInfo.timeStr,
+                    stage: 'CHECK_III',
+                    action: 'SCRAPPED',
+                    metricTested: 'HARDNESS_HRC',
+                    measuredValue: 39.5,
+                    standardValue: '45.0 - 50.0 HRC',
+                    deviationMargin: '-5.5 HRC below 45.0 HRC minimum',
+                    reason: 'Rework heat exposure degraded core material hardness; condemned to scrap',
+                  };
+                  qc.defectAuditLog = [check3ScrapRec, ...(qc.defectAuditLog || [])];
+
+                  ledger = recordItemLifecycleScrap(
+                    ledger,
+                    partCode,
+                    config.simulatedSecondsOfDay,
+                    clockInfo.timeStr,
+                    `QC Check III Scrapped: ${check3ScrapRec.reason} (${check3ScrapRec.deviationMargin})`
+                  );
                 }
               }
             }
@@ -1560,22 +1872,72 @@ export function tickSimulation(
               processedEntity.type = 'MACHINED_RM1';
               processedEntity.currentStationId = 'buffer_rm1';
               stations['buffer_rm1'].currentQueueCount++;
+              ledger = recordItemLifecycleStepTransition(
+                ledger,
+                partCode,
+                'buffer_rm1',
+                stations['buffer_rm1'].name,
+                'RM1',
+                config.simulatedSecondsOfDay,
+                clockInfo.timeStr,
+                'CNC Turning complete; staging in intermediate WIP buffer'
+              );
             } else if (st.type === 'cnc_milling') {
               processedEntity.type = 'MACHINED_RM2';
               processedEntity.currentStationId = 'buffer_rm2';
               stations['buffer_rm2'].currentQueueCount++;
+              ledger = recordItemLifecycleStepTransition(
+                ledger,
+                partCode,
+                'buffer_rm2',
+                stations['buffer_rm2'].name,
+                'RM2',
+                config.simulatedSecondsOfDay,
+                clockInfo.timeStr,
+                'CNC Milling complete; staging in intermediate WIP buffer'
+              );
             } else if (st.type === 'cnc_shaping') {
               processedEntity.type = 'MACHINED_RM3';
               processedEntity.currentStationId = 'buffer_rm3';
               stations['buffer_rm3'].currentQueueCount++;
+              ledger = recordItemLifecycleStepTransition(
+                ledger,
+                partCode,
+                'buffer_rm3',
+                stations['buffer_rm3'].name,
+                'RM3',
+                config.simulatedSecondsOfDay,
+                clockInfo.timeStr,
+                'CNC Shaping complete; staging in intermediate WIP buffer'
+              );
             } else if (st.type === 'quality_control') {
               // Inspected entity transfers into Converge Joiner intake buffer
               processedEntity.currentStationId = 'converge_join';
               processedEntity.targetStationId = 'final_assembly';
               stations['converge_join'].currentQueueCount++;
+              ledger = recordItemLifecycleStepTransition(
+                ledger,
+                partCode,
+                'converge_join',
+                stations['converge_join'].name,
+                partLine,
+                config.simulatedSecondsOfDay,
+                clockInfo.timeStr,
+                'QC inspection passed; staged at 3:1 converge joiner'
+              );
             } else if (st.type === 'final_assembly') {
               processedEntity.currentStationId = 'entity_queue';
               stations['entity_queue'].currentQueueCount++;
+              ledger = recordItemLifecycleStepTransition(
+                ledger,
+                partCode,
+                'entity_queue',
+                stations['entity_queue'].name,
+                'FINAL',
+                config.simulatedSecondsOfDay,
+                clockInfo.timeStr,
+                'Robotic final assembly complete; staged in packaging infeed buffer'
+              );
             } else if (st.type === 'packaging') {
               processedEntity.type = 'PACKAGED_PRODUCT';
               // Outfeed entity onto transporter_out to realistically travel to entity_queue_out and sink_dispatch
@@ -1583,8 +1945,16 @@ export function tickSimulation(
               processedEntity.targetStationId = 'entity_queue_out';
               processedEntity.positionRatio = 0;
               processedEntity.isProcessing = false;
-              // Note: st.processedToday was already incremented for packaging on cycle completion above.
-              // Do NOT double increment packaging.processedToday here!
+              ledger = recordItemLifecycleStepTransition(
+                ledger,
+                partCode,
+                'transporter_out',
+                stations['transporter_out'].name,
+                'FINAL',
+                config.simulatedSecondsOfDay,
+                clockInfo.timeStr,
+                'Packaging completed; on outfeed belt toward dispatch'
+              );
             }
           }
         }
@@ -1614,6 +1984,26 @@ export function tickSimulation(
       });
       if (st.history.length > 30) {
         st.history.shift();
+      }
+    }
+  }
+
+  // 7.5 Stochastic Equipment Failure Simulation (Configurable by user)
+  if (config.randomFailuresEnabled && config.isShiftOpen && !isLunchBreak) {
+    const mtbf = Math.max(0.0001, config.mtbfHours || 16.0);
+    // Probability per dt that an unexpected equipment incident strikes an active machine
+    const failureProb = (1.0 / (mtbf * 3600)) * dt;
+    if (Math.random() < failureProb) {
+      const activeCandidates = Object.values(stations).filter(
+        st => st.activeFault === 'NONE' && !st.isQueue && st.type !== 'truck_source' && st.type !== 'sink_dispatch'
+      );
+      if (activeCandidates.length > 0) {
+        const picked = activeCandidates[Math.floor(Math.random() * activeCandidates.length)];
+        const fault = getRandomFaultForStation(picked.type);
+        if (fault) {
+          const injected = injectPlantFault({ ...state, stations }, picked.id, fault);
+          stations[picked.id] = injected.stations[picked.id];
+        }
       }
     }
   }
@@ -1681,6 +2071,8 @@ export function tickSimulation(
     }
   }
 
+  ledger = tickActiveLifecycleRecords(ledger, config.simulatedSecondsOfDay);
+
   return {
     ...state,
     timeSeconds: newTime,
@@ -1699,6 +2091,7 @@ export function tickSimulation(
     },
     config,
     performanceHistory,
+    itemLifecycleLedger: ledger,
   };
 }
 
@@ -1816,17 +2209,32 @@ export function advanceToNextDay(state: PlantSimulationState): PlantSimulationSt
     },
   };
 
-  // Reset daily counters for all stations while preserving cumulative history
+  // PRESERVE BACKLOG ENTITIES: Entities start from the exact position they were left last day!
+  const entities = state.entities.map(e => ({ ...e }));
+
+  // Reset daily counters for all stations while PRESERVING backlog queues and in-process items
   const stations = { ...state.stations };
   for (const id of Object.keys(stations)) {
+    const prevSt = stations[id];
+    const stationEntities = entities.filter(e => e.currentStationId === id);
+    const processingEntity = stationEntities.find(e => e.isProcessing);
+    const queuedEntities = stationEntities.filter(e => !e.isProcessing);
+
     stations[id] = {
-      ...stations[id],
-      processedToday: 0,
-      currentQueueCount: 0,
-      currentlyProcessingCount: 0,
-      currentProcessingEntityId: null,
-      processingTimeRemaining: 0,
-      status: stations[id].isQueue ? 'IDLE' : 'STARVED',
+      ...prevSt,
+      processedToday: 0, // Reset today's count for the new day
+      // Backlog queue count and in-progress items resume seamlessly
+      currentQueueCount: prevSt.isQueue ? queuedEntities.length : prevSt.currentQueueCount,
+      currentlyProcessingCount: processingEntity ? 1 : (prevSt.type.includes('transporter') ? stationEntities.length : 0),
+      currentProcessingEntityId: processingEntity ? processingEntity.id : prevSt.currentProcessingEntityId,
+      processingTimeRemaining: processingEntity ? Math.max(1.0, prevSt.processingTimeRemaining) : 0,
+      status: prevSt.activeFault !== 'NONE'
+        ? 'MAINTENANCE_REQUIRED'
+        : processingEntity
+        ? 'BUSY'
+        : prevSt.isQueue
+        ? 'IDLE'
+        : (stationEntities.length > 0 ? 'BUSY' : (id.startsWith('truck_') ? 'IDLE' : 'STARVED')),
     };
   }
 
@@ -1847,8 +2255,8 @@ export function advanceToNextDay(state: PlantSimulationState): PlantSimulationSt
   return {
     ...state,
     completedCount: 0,
-    entities: [],
-    wipCount: 0,
+    entities, // Backlog entities start from the position they were left last day
+    wipCount: entities.length,
     config,
     stations,
     performanceHistory: history,
@@ -1912,20 +2320,28 @@ export function injectPlantFault(
   }
 
   // Critical failure classification:
-  // Tool flank wear is only considered MAINTENANCE_REQUIRED if VB >= 0.35mm (ISO 3685 failure threshold)
+  // Tool flank wear is considered MAINTENANCE_REQUIRED if VB >= 0.35mm (ISO 3685 failure threshold)
   // Below 0.35mm, it is an advisory condition (machine keeps working, status remains operational / busy)
   const isToolWearCritical = fault === 'TOOL_FLANK_WEAR' && (updatedSensors.toolWearIndex ?? 0) >= 0.35;
   const isFatalFault = fault !== 'NONE' && (
     fault === 'SPINDLE_BEARING_VIBRATION' ||
     fault === 'BEARING_INNER_RACE_FAULT' ||
     fault === 'SPINDLE_OVERHEAT_LUB_FAIL' ||
+    fault === 'SPINDLE_THERMAL_EXPANSION' ||
+    fault === 'CHIP_CONVEYOR_CLOG' ||
+    fault === 'BELT_SLIP_AND_TENSION_LOSS' ||
     fault === 'MOTOR_WINDING_OVERCURRENT' ||
     fault === 'SEALER_HEATER_ELEMENT_FAULT' ||
+    fault === 'BARCODE_SCANNER_MISREAD' ||
+    fault === 'STRAPPING_DISPENSER_JAM' ||
     fault === 'OPTICAL_LENS_FOULED' ||
     fault === 'GAUGE_CALIBRATION_DRIFT' ||
     fault === 'PROBE_ACTUATOR_RESPONSE_LAG' ||
     fault === 'ROLLER_BEARING_OVERHEAT' ||
     fault === 'CONVEYOR_MOTOR_OVERLOAD' ||
+    fault === 'TORQUE_DRIVER_OUT_OF_SPEC' ||
+    fault === 'PNEUMATIC_PRESSURE_DROP' ||
+    fault === 'OPERATOR_ASSEMBLY_BOTTLENECK' ||
     isToolWearCritical
   );
 
@@ -2013,6 +2429,7 @@ export function performStationMaintenance(
   const repairedStation: Station = {
     ...station,
     activeFault: 'NONE',
+    isManuallyStopped: false,
     sensors: resetSensors,
     mlResult: freshMl,
     wearPercentage: 2.0,
@@ -2026,6 +2443,38 @@ export function performStationMaintenance(
     stations: {
       ...state.stations,
       [stationId]: repairedStation,
+    },
+  };
+}
+
+/**
+ * Stops or resumes the operation of any individual plant component at operator discretion.
+ */
+export function toggleStationManualStop(
+  state: PlantSimulationState,
+  stationId: string
+): PlantSimulationState {
+  const station = state.stations[stationId];
+  if (!station) return state;
+
+  const nextStoppedState = !station.isManuallyStopped;
+  const updatedStation: Station = {
+    ...station,
+    isManuallyStopped: nextStoppedState,
+    status: nextStoppedState
+      ? 'MAINTENANCE_REQUIRED'
+      : (station.currentProcessingEntityId
+          ? 'BUSY'
+          : (station.isQueue
+              ? (station.currentQueueCount > 0 ? 'BUSY' : 'IDLE')
+              : 'IDLE')),
+  };
+
+  return {
+    ...state,
+    stations: {
+      ...state.stations,
+      [stationId]: updatedStation,
     },
   };
 }
@@ -2094,13 +2543,37 @@ export function updatePlantOperationalConfig(
     },
   };
 
+  // If partial updated generic conveyorTransportTimeSeconds without explicit line times, sync line times
+  if (partial.conveyorTransportTimeSeconds !== undefined) {
+    if (partial.conveyorLatheTimeSeconds === undefined) {
+      newConfig.conveyorLatheTimeSeconds = partial.conveyorTransportTimeSeconds;
+    }
+    if (partial.conveyorMillingTimeSeconds === undefined) {
+      newConfig.conveyorMillingTimeSeconds = partial.conveyorTransportTimeSeconds;
+    }
+    if (partial.conveyorShapingTimeSeconds === undefined) {
+      newConfig.conveyorShapingTimeSeconds = partial.conveyorTransportTimeSeconds;
+    }
+  }
+
   const stations = { ...state.stations };
   for (const id of Object.keys(stations)) {
     const st = { ...stations[id] };
     if (st.type === 'transporter') {
-      st.nominalProcessingTime = newConfig.conveyorTransportTimeSeconds;
+      if (id === 'transporter_rm1') {
+        st.nominalProcessingTime = newConfig.conveyorLatheTimeSeconds !== undefined ? newConfig.conveyorLatheTimeSeconds : (newConfig.conveyorTransportTimeSeconds ?? 360.0);
+        st.name = `Transporter RM1 (Lathe - ${st.nominalProcessingTime}s)`;
+      } else if (id === 'transporter_rm2') {
+        st.nominalProcessingTime = newConfig.conveyorMillingTimeSeconds !== undefined ? newConfig.conveyorMillingTimeSeconds : (newConfig.conveyorTransportTimeSeconds ?? 240.0);
+        st.name = `Transporter RM2 (Milling - ${st.nominalProcessingTime}s)`;
+      } else if (id === 'transporter_rm3') {
+        st.nominalProcessingTime = newConfig.conveyorShapingTimeSeconds !== undefined ? newConfig.conveyorShapingTimeSeconds : (newConfig.conveyorTransportTimeSeconds ?? 210.0);
+        st.name = `Transporter RM3 (Shaping - ${st.nominalProcessingTime}s)`;
+      } else {
+        st.nominalProcessingTime = newConfig.conveyorTransportTimeSeconds ?? 45.0;
+      }
     } else if (st.type === 'transporter_out') {
-      st.nominalProcessingTime = 45.0; // Fixed 45s outfeed conveyor
+      st.nominalProcessingTime = newConfig.conveyorTransportTimeSeconds ?? 45.0;
     } else if (st.type === 'cnc_lathe') {
       st.nominalProcessingTime = newConfig.latheCycleTimeMinutes * 60;
     } else if (st.type === 'cnc_milling') {
@@ -2139,4 +2612,91 @@ export function setSimulationSpeed(
       timeScale: speed,
     },
   };
+}
+
+/**
+ * Selects an appropriate realistic industrial fault mode for a given machine type
+ */
+export function getRandomFaultForStation(stationType: string): FaultType {
+  if (stationType.includes('cnc')) {
+    const cncFaults: FaultType[] = [
+      'SPINDLE_BEARING_VIBRATION',
+      'TOOL_FLANK_WEAR',
+      'SPINDLE_THERMAL_EXPANSION',
+      'CHIP_CONVEYOR_CLOG',
+      'BEARING_INNER_RACE_FAULT',
+    ];
+    return cncFaults[Math.floor(Math.random() * cncFaults.length)];
+  }
+  if (stationType.includes('transporter')) {
+    const conveyorFaults: FaultType[] = [
+      'BELT_SLIP_AND_TENSION_LOSS',
+      'ROLLER_BEARING_OVERHEAT',
+      'CONVEYOR_MOTOR_OVERLOAD',
+    ];
+    return conveyorFaults[Math.floor(Math.random() * conveyorFaults.length)];
+  }
+  if (stationType.includes('quality')) {
+    const qcFaults: FaultType[] = [
+      'OPTICAL_LENS_FOULED',
+      'GAUGE_CALIBRATION_DRIFT',
+      'PROBE_ACTUATOR_RESPONSE_LAG',
+    ];
+    return qcFaults[Math.floor(Math.random() * qcFaults.length)];
+  }
+  if (stationType.includes('assembly')) {
+    const asyFaults: FaultType[] = [
+      'TORQUE_DRIVER_OUT_OF_SPEC',
+      'PNEUMATIC_PRESSURE_DROP',
+      'OPERATOR_ASSEMBLY_BOTTLENECK',
+    ];
+    return asyFaults[Math.floor(Math.random() * asyFaults.length)];
+  }
+  if (stationType.includes('packaging')) {
+    const pkgFaults: FaultType[] = [
+      'SEALER_HEATER_ELEMENT_FAULT',
+      'BARCODE_SCANNER_MISREAD',
+      'STRAPPING_DISPENSER_JAM',
+    ];
+    return pkgFaults[Math.floor(Math.random() * pkgFaults.length)];
+  }
+  return 'MOTOR_WINDING_OVERCURRENT';
+}
+
+/**
+ * Randomly triggers a failure event on one of the operating machines (user discretion)
+ */
+export function triggerRandomMachineFailure(state: PlantSimulationState): {
+  state: PlantSimulationState;
+  stationId: string;
+  stationName: string;
+  fault: FaultType;
+} | null {
+  const candidateStations = Object.values(state.stations).filter(
+    st => st.activeFault === 'NONE' && !st.isQueue && st.type !== 'truck_source' && st.type !== 'sink_dispatch'
+  );
+  if (candidateStations.length === 0) return null;
+
+  const target = candidateStations[Math.floor(Math.random() * candidateStations.length)];
+  const fault = getRandomFaultForStation(target.type);
+  const updatedState = injectPlantFault(state, target.id, fault);
+  return {
+    state: updatedState,
+    stationId: target.id,
+    stationName: target.name,
+    fault,
+  };
+}
+
+/**
+ * Repairs / restores all equipment across the plant to nominal operating state
+ */
+export function clearAllStationFaults(state: PlantSimulationState): PlantSimulationState {
+  let updatedState = { ...state };
+  for (const st of Object.values(state.stations)) {
+    if (st.activeFault !== 'NONE' || st.status === 'MAINTENANCE_REQUIRED') {
+      updatedState = performStationMaintenance(updatedState, st.id);
+    }
+  }
+  return updatedState;
 }

@@ -16,6 +16,8 @@ import {
   Check,
   Layers,
   ArrowRight,
+  AlertTriangle,
+  Flame,
 } from 'lucide-react';
 
 interface PlantConfigModalProps {
@@ -23,6 +25,8 @@ interface PlantConfigModalProps {
   onClose: () => void;
   config: PlantOperationalConfig;
   onSaveConfig: (updated: Partial<PlantOperationalConfig>) => void;
+  onTriggerRandomFailure?: () => void;
+  onRepairAll?: () => void;
 }
 
 export function PlantConfigModal({
@@ -30,6 +34,8 @@ export function PlantConfigModal({
   onClose,
   config,
   onSaveConfig,
+  onTriggerRandomFailure,
+  onRepairAll,
 }: PlantConfigModalProps) {
   if (!isOpen) return null;
 
@@ -93,6 +99,9 @@ export function PlantConfigModal({
       unloadingMode: 'MANUAL_HUMAN',
       humanCrewSize: 3,
       conveyorTransportTimeSeconds: 45,
+      conveyorLatheTimeSeconds: 360,
+      conveyorMillingTimeSeconds: 240,
+      conveyorShapingTimeSeconds: 210,
       latheCycleTimeMinutes: 6.0,
       millingCycleTimeMinutes: 4.0,
       shapingCycleTimeMinutes: 3.5,
@@ -108,6 +117,10 @@ export function PlantConfigModal({
       assemblyMode: 'SEMI_AUTOMATED',
       assemblyCycleTimeMinutes: 4.0,
       packagingCycleTimeMinutes: 4.0,
+      randomFailuresEnabled: true,
+      failureFrequency: 'MEDIUM',
+      mtbfHours: 16.0,
+      toolWearRateMultiplier: 1.0,
     };
 
     setFormData(prev => ({
@@ -633,104 +646,186 @@ export function PlantConfigModal({
               <span className="text-xs text-slate-400">Configured to exact prompt values</span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {/* Conveyor */}
-              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
-                <label className="text-xs font-bold text-slate-200 block">
-                  Conveyor Transport Time
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min="5"
-                    max="180"
-                    value={formData.conveyorTransportTimeSeconds}
-                    onChange={e =>
-                      setFormData(prev => ({
-                        ...prev,
-                        conveyorTransportTimeSeconds: Number(e.target.value),
-                      }))
-                    }
-                    className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-cyan-300"
-                  />
-                  <span className="text-xs text-slate-400">Seconds (45s default)</span>
+            {/* Sub-section: Conveyor Transport Times */}
+            <div className="space-y-1.5">
+              <span className="text-xs font-semibold text-slate-300 block">Conveyor Transport Durations (Seconds):</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {/* Conveyor Lathe */}
+                <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
+                  <label className="text-xs font-bold text-slate-200 block">
+                    Conveyor Lathe (RM1)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="10"
+                      max="1800"
+                      value={formData.conveyorLatheTimeSeconds ?? 360}
+                      onChange={e =>
+                        setFormData(prev => ({
+                          ...prev,
+                          conveyorLatheTimeSeconds: Number(e.target.value),
+                        }))
+                      }
+                      className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-cyan-300"
+                    />
+                    <span className="text-xs text-slate-400">Seconds (360s default)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">Infeed conveyor feeding CNC lathe</p>
                 </div>
-                <p className="text-[10px] text-slate-500">Transports RM one by one to workstation</p>
-              </div>
 
-              {/* Lathe */}
-              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
-                <label className="text-xs font-bold text-slate-200 block">
-                  CNC Lathe Cycle Time
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min="1.0"
-                    max="30.0"
-                    step="0.5"
-                    value={formData.latheCycleTimeMinutes}
-                    onChange={e =>
-                      setFormData(prev => ({
-                        ...prev,
-                        latheCycleTimeMinutes: Number(e.target.value),
-                      }))
-                    }
-                    className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-cyan-300"
-                  />
-                  <span className="text-xs text-slate-400">Minutes (6.0m default)</span>
+                {/* Conveyor Milling */}
+                <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
+                  <label className="text-xs font-bold text-slate-200 block">
+                    Conveyor Milling (RM2)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="10"
+                      max="1800"
+                      value={formData.conveyorMillingTimeSeconds ?? 240}
+                      onChange={e =>
+                        setFormData(prev => ({
+                          ...prev,
+                          conveyorMillingTimeSeconds: Number(e.target.value),
+                        }))
+                      }
+                      className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-cyan-300"
+                    />
+                    <span className="text-xs text-slate-400">Seconds (240s default)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">Infeed conveyor feeding CNC milling</p>
                 </div>
-                <p className="text-[10px] text-slate-500">Turning & facing shaft components</p>
-              </div>
 
-              {/* Milling */}
-              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
-                <label className="text-xs font-bold text-slate-200 block">
-                  CNC Milling Cycle Time
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min="1.0"
-                    max="30.0"
-                    step="0.5"
-                    value={formData.millingCycleTimeMinutes}
-                    onChange={e =>
-                      setFormData(prev => ({
-                        ...prev,
-                        millingCycleTimeMinutes: Number(e.target.value),
-                      }))
-                    }
-                    className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-cyan-300"
-                  />
-                  <span className="text-xs text-slate-400">Minutes (4.0m default)</span>
+                {/* Conveyor Shaping */}
+                <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
+                  <label className="text-xs font-bold text-slate-200 block">
+                    Conveyor Shaping (RM3)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="10"
+                      max="1800"
+                      value={formData.conveyorShapingTimeSeconds ?? 210}
+                      onChange={e =>
+                        setFormData(prev => ({
+                          ...prev,
+                          conveyorShapingTimeSeconds: Number(e.target.value),
+                        }))
+                      }
+                      className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-cyan-300"
+                    />
+                    <span className="text-xs text-slate-400">Seconds (210s default)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">Infeed conveyor feeding CNC shaping</p>
                 </div>
-                <p className="text-[10px] text-slate-500">Boring & facing casting housings</p>
-              </div>
 
-              {/* Shaping */}
-              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
-                <label className="text-xs font-bold text-slate-200 block">
-                  CNC Shaping Cycle Time
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min="1.0"
-                    max="30.0"
-                    step="0.5"
-                    value={formData.shapingCycleTimeMinutes}
-                    onChange={e =>
-                      setFormData(prev => ({
-                        ...prev,
-                        shapingCycleTimeMinutes: Number(e.target.value),
-                      }))
-                    }
-                    className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-cyan-300"
-                  />
-                  <span className="text-xs text-slate-400">Minutes (3.5m default)</span>
+                {/* Outfeed Conveyor */}
+                <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
+                  <label className="text-xs font-bold text-slate-200 block">
+                    Outfeed Conveyor
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="10"
+                      max="600"
+                      value={formData.conveyorTransportTimeSeconds}
+                      onChange={e =>
+                        setFormData(prev => ({
+                          ...prev,
+                          conveyorTransportTimeSeconds: Number(e.target.value),
+                        }))
+                      }
+                      className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-cyan-300"
+                    />
+                    <span className="text-xs text-slate-400">Seconds (45s default)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">Finished packaging transfer conveyor</p>
                 </div>
-                <p className="text-[10px] text-slate-500">Gear tooth shaping & slot cutting</p>
+              </div>
+            </div>
+
+            {/* Sub-section: CNC Machining Cycle Times */}
+            <div className="space-y-1.5 pt-2 border-t border-slate-800/60">
+              <span className="text-xs font-semibold text-slate-300 block">Machining Cycle Times (Minutes):</span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Lathe */}
+                <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
+                  <label className="text-xs font-bold text-slate-200 block">
+                    CNC Lathe Cycle Time
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="1.0"
+                      max="30.0"
+                      step="0.5"
+                      value={formData.latheCycleTimeMinutes}
+                      onChange={e =>
+                        setFormData(prev => ({
+                          ...prev,
+                          latheCycleTimeMinutes: Number(e.target.value),
+                        }))
+                      }
+                      className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-cyan-300"
+                    />
+                    <span className="text-xs text-slate-400">Minutes (6.0m default)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">Turning & facing shaft components</p>
+                </div>
+
+                {/* Milling */}
+                <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
+                  <label className="text-xs font-bold text-slate-200 block">
+                    CNC Milling Cycle Time
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="1.0"
+                      max="30.0"
+                      step="0.5"
+                      value={formData.millingCycleTimeMinutes}
+                      onChange={e =>
+                        setFormData(prev => ({
+                          ...prev,
+                          millingCycleTimeMinutes: Number(e.target.value),
+                        }))
+                      }
+                      className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-cyan-300"
+                    />
+                    <span className="text-xs text-slate-400">Minutes (4.0m default)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">Boring & facing casting housings</p>
+                </div>
+
+                {/* Shaping */}
+                <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
+                  <label className="text-xs font-bold text-slate-200 block">
+                    CNC Shaping Cycle Time
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="1.0"
+                      max="30.0"
+                      step="0.5"
+                      value={formData.shapingCycleTimeMinutes}
+                      onChange={e =>
+                        setFormData(prev => ({
+                          ...prev,
+                          shapingCycleTimeMinutes: Number(e.target.value),
+                        }))
+                      }
+                      className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-cyan-300"
+                    />
+                    <span className="text-xs text-slate-400">Minutes (3.5m default)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">Gear tooth shaping & slot cutting</p>
+                </div>
               </div>
             </div>
           </div>
@@ -1072,6 +1167,145 @@ export function PlantConfigModal({
                   <p className="text-[11px] text-slate-400 pt-1 border-t border-slate-800">
                     After packaging takes 4 minutes, completed units are moved via outfeed conveyor to the warehouse for dispatch.
                   </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION 7: Equipment Failure & Reliability Simulation (User Discretion) */}
+          <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+              <div className="flex items-center gap-2 text-rose-400 font-bold text-xs uppercase tracking-wider">
+                <AlertTriangle className="w-4 h-4 text-rose-400" />
+                <span>7. Machine Failure & Equipment Reliability Simulation (User Discretion)</span>
+              </div>
+              <span className="text-[11px] font-mono text-cyan-400">Customizable Breakdown & Stress Testing</span>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              Machines do not need to run continuously without failure. You can enable automatic stochastic breakdown events, tune the Mean Time Between Failures (MTBF), accelerate tool wear degradation, or trigger incident events on demand.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Stochastic Failure Toggle & MTBF */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-200 flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.randomFailuresEnabled}
+                      onChange={e => setFormData(prev => ({ ...prev, randomFailuresEnabled: e.target.checked }))}
+                      className="w-4 h-4 rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-0 accent-cyan-500 cursor-pointer"
+                    />
+                    <span>Enable Stochastic Random Failures</span>
+                  </label>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${formData.randomFailuresEnabled ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'bg-slate-800 text-slate-400'}`}>
+                    {formData.randomFailuresEnabled ? 'ACTIVE' : 'DISABLED'}
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 pt-1">
+                  <label className="text-[11px] font-semibold text-slate-300 block">Failure Frequency / MTBF Level:</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, failureFrequency: 'LOW', mtbfHours: 48 }))}
+                      className={`px-2 py-1.5 rounded text-xs font-semibold border transition text-center ${
+                        formData.failureFrequency === 'LOW'
+                          ? 'bg-cyan-500/20 border-cyan-500 text-cyan-200'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      Low (~48h)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, failureFrequency: 'MEDIUM', mtbfHours: 16 }))}
+                      className={`px-2 py-1.5 rounded text-xs font-semibold border transition text-center ${
+                        formData.failureFrequency === 'MEDIUM'
+                          ? 'bg-amber-500/20 border-amber-500 text-amber-200'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      Medium (~16h)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, failureFrequency: 'HIGH', mtbfHours: 6 }))}
+                      className={`px-2 py-1.5 rounded text-xs font-semibold border transition text-center ${
+                        formData.failureFrequency === 'HIGH'
+                          ? 'bg-rose-500/20 border-rose-500 text-rose-200'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      High (~6h)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-xs text-slate-300">Custom MTBF (Operating Hours):</span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min="1"
+                      max="200"
+                      value={formData.mtbfHours}
+                      onChange={e => setFormData(prev => ({ ...prev, mtbfHours: Math.max(1, Number(e.target.value)) }))}
+                      className="w-16 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-cyan-300 text-right"
+                    />
+                    <span className="text-xs text-slate-400">Hours</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tool Wear Rate & Manual Controls */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold text-slate-200">Tool Wear Degradation Multiplier:</span>
+                    <span className="text-xs font-mono text-cyan-300 font-bold">{formData.toolWearRateMultiplier}x</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="10.0"
+                    step="0.5"
+                    value={formData.toolWearRateMultiplier}
+                    onChange={e => setFormData(prev => ({ ...prev, toolWearRateMultiplier: Number(e.target.value) }))}
+                    className="w-full accent-cyan-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500">
+                    <span>0.5x (Slow)</span>
+                    <span className="text-cyan-400 font-semibold">1.0x (Nominal ~250h)</span>
+                    <span>10.0x (Rapid Wear)</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                  <span className="text-[11px] font-semibold text-slate-300 block">Instant Actions (User Discretion):</span>
+                  <div className="flex flex-wrap gap-2">
+                    {onTriggerRandomFailure && (
+                      <button
+                        type="button"
+                        onClick={onTriggerRandomFailure}
+                        className="px-3 py-1.5 rounded text-xs font-bold bg-rose-950/60 border border-rose-500/40 text-rose-300 hover:bg-rose-900/50 flex items-center gap-1.5 transition"
+                      >
+                        <Flame className="w-3.5 h-3.5 text-rose-400" />
+                        <span>Randomize Failure Now</span>
+                      </button>
+                    )}
+                    {onRepairAll && (
+                      <button
+                        type="button"
+                        onClick={onRepairAll}
+                        className="px-3 py-1.5 rounded text-xs font-bold bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/50 flex items-center gap-1.5 transition"
+                      >
+                        <Wrench className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Repair All Machines</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

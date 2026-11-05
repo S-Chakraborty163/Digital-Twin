@@ -4,9 +4,12 @@ import {
   tickSimulation,
   injectPlantFault,
   performStationMaintenance,
+  toggleStationManualStop,
   updatePlantOperationalConfig,
   formatSimulatedClock,
   advanceToNextDay,
+  triggerRandomMachineFailure,
+  clearAllStationFaults,
 } from './simulation/plantEngine';
 import { FaultType, PlantSimulationState } from './types/factory';
 import { FactoryCanvas } from './components/FactoryCanvas';
@@ -17,6 +20,7 @@ import { QCSubsystemModal } from './components/QCSubsystemModal';
 import { PlantConfigModal } from './components/PlantConfigModal';
 import { ComponentDeepDiveView } from './components/ComponentDeepDiveView';
 import { PerformanceTrendsCard } from './components/PerformanceTrendsCard';
+import { MaterialTraceabilityModal } from './components/MaterialTraceabilityModal';
 import {
   Activity,
   AlertTriangle,
@@ -36,25 +40,40 @@ import {
   RotateCcw,
   ArrowRight,
   TrendingUp,
+  Flame,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 export default function App() {
   const [simulationState, setSimulationState] = useState<PlantSimulationState>(() => {
     try {
+      const savedFull = localStorage.getItem('aerotwin_saved_simulation_full');
+      if (savedFull) {
+        const parsed = JSON.parse(savedFull);
+        if (parsed && parsed.stations && parsed.config) {
+          if (Array.isArray(parsed.itemLifecycleLedger)) {
+            parsed.itemLifecycleLedger = parsed.itemLifecycleLedger.filter(
+              (r: any) => !r.lotBatchId?.includes('20250228')
+            );
+          }
+          return parsed;
+        }
+      }
       const saved = localStorage.getItem('aerotwin_plant_config');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return createInitialPlantState(parsed);
+        return createInitialPlantState(parsed, false);
       }
     } catch {
       // ignore storage access errors
     }
-    return createInitialPlantState();
+    return createInitialPlantState(undefined, false);
   });
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [isQCModalOpen, setIsQCModalOpen] = useState(false);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [isTraceabilityModalOpen, setIsTraceabilityModalOpen] = useState(false);
   const [selectedQCId, setSelectedQCId] = useState<string>('qc_rm1');
   const [activeMainTab, setActiveMainTab] = useState<
     'optimization' | 'performance_trends' | 'component_deep_dive' | 'leaderboard' | 'qc_subsystem'
@@ -80,6 +99,19 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Persist simulation state to localStorage so link visits resume unbothered
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem('aerotwin_saved_simulation_full', JSON.stringify(simulationState));
+        localStorage.setItem('aerotwin_plant_config', JSON.stringify(simulationState.config));
+      } catch {
+        // ignore storage/quota errors
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [simulationState]);
+
   const handleTogglePlay = () => {
     setSimulationState(prev => ({ ...prev, isRunning: !prev.isRunning }));
   };
@@ -93,9 +125,25 @@ export default function App() {
   };
 
   const handleReset = () => {
-    // Preserve customized operational shift and logistics parameters across resets!
-    setSimulationState(prev => createInitialPlantState(prev.config));
+    // Preserve customized operational shift and logistics parameters across resets,
+    // while strictly resetting arrears backlog to 0, Day 1, and updating local storage!
+    setSimulationState(prev => {
+      const next = createInitialPlantState(prev.config, false);
+      try {
+        localStorage.removeItem('aerotwin_saved_simulation_full');
+        localStorage.setItem('aerotwin_plant_config', JSON.stringify(next.config));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
   };
+
+  const handleToggleManualStop = (stationId: string) => {
+    setSimulationState(prev => toggleStationManualStop(prev, stationId));
+  };
+
+  const [failureNotification, setFailureNotification] = useState<string | null>(null);
 
   const handleInjectFault = (stationId: string, fault: FaultType) => {
     setSimulationState(prev => injectPlantFault(prev, stationId, fault));
@@ -103,6 +151,45 @@ export default function App() {
 
   const handleRepair = (stationId: string) => {
     setSimulationState(prev => performStationMaintenance(prev, stationId));
+  };
+
+  const handleRandomizeFailure = () => {
+    setSimulationState(prev => {
+      const res = triggerRandomMachineFailure(prev);
+      if (res) {
+        setFailureNotification(`⚠️ Random Failure Triggered: ${res.fault.replace(/_/g, ' ')} on ${res.stationName}`);
+        setTimeout(() => setFailureNotification(null), 5000);
+        return res.state;
+      } else {
+        setFailureNotification(`ℹ️ All operating machines are already running under simulated fault conditions.`);
+        setTimeout(() => setFailureNotification(null), 3000);
+        return prev;
+      }
+    });
+  };
+
+  const handleRepairAll = () => {
+    setSimulationState(prev => {
+      const updated = clearAllStationFaults(prev);
+      setFailureNotification(`✅ Restored all plant equipment to nominal operating status.`);
+      setTimeout(() => setFailureNotification(null), 4000);
+      return updated;
+    });
+  };
+
+  const handleToggleRandomFailures = () => {
+    setSimulationState(prev => {
+      const nextVal = !prev.config.randomFailuresEnabled;
+      setFailureNotification(nextVal ? `⚡ Stochastic Failure Simulation Enabled (MTBF: ${prev.config.mtbfHours}h)` : `🛑 Stochastic Machine Failures Paused`);
+      setTimeout(() => setFailureNotification(null), 3500);
+      return {
+        ...prev,
+        config: {
+          ...prev.config,
+          randomFailuresEnabled: nextVal,
+        },
+      };
+    });
   };
 
   const handleAutoBalance = () => {
@@ -239,6 +326,20 @@ export default function App() {
             </span>
           </button>
 
+          {/* Material Traceability & Excel CSV Export */}
+          <button
+            onClick={() => setIsTraceabilityModalOpen(true)}
+            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-bold flex items-center gap-1.5 transition shadow"
+            title="Material Traceability Journey Ledger - Track every raw material entry & timing and export to Excel CSV"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden md:inline">Traceability & Export (.csv)</span>
+            <span className="md:hidden">Traceability</span>
+            <span className="text-[10px] bg-amber-950 px-1.5 py-0.2 rounded font-mono text-amber-400">
+              CSV
+            </span>
+          </button>
+
           {/* Guide / Documentation Modal Trigger */}
           <button
             onClick={() => setIsGuideOpen(true)}
@@ -334,6 +435,7 @@ export default function App() {
             </div>
 
             {/* Daily Target & Arrears Tracker */}
+            {/* Failure Simulation Quick Controls & Advance Day */}
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
               <div className="bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs space-y-0.5">
                 <div className="flex items-center justify-between gap-3">
@@ -353,17 +455,79 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Stochastic Failure Quick Action Controls */}
+              <div className="flex items-center gap-1.5 bg-slate-950/80 border border-slate-800 p-1 rounded-xl">
+                {/* Randomize Failure Button */}
+                <button
+                  onClick={handleRandomizeFailure}
+                  className="px-2.5 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+                  title="Inject an immediate random machine failure event (bearing wear, spindle overheat, backlash, or tool chipping)"
+                >
+                  <Flame className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden md:inline">Randomize Fault</span>
+                </button>
+
+                {/* Stochastic Autopilot Toggle */}
+                <button
+                  onClick={handleToggleRandomFailures}
+                  className={`px-2.5 py-2 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${
+                    simulationState.config.randomFailuresEnabled
+                      ? 'bg-purple-950/60 text-purple-300 border-purple-500/50 hover:bg-purple-900/60'
+                      : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:bg-slate-700/80'
+                  }`}
+                  title={
+                    simulationState.config.randomFailuresEnabled
+                      ? `Stochastic failures active (MTBF: ${simulationState.config.mtbfHours}h, rate: ${simulationState.config.failureFrequency}). Click to pause.`
+                      : 'Stochastic failures paused. Click to enable autonomous machine breakdowns.'
+                  }
+                >
+                  <span className={`w-2 h-2 rounded-full ${simulationState.config.randomFailuresEnabled ? 'bg-purple-400 animate-ping' : 'bg-slate-500'}`} />
+                  <span className="hidden sm:inline">Failures:</span>
+                  <span className="font-mono font-bold">
+                    {simulationState.config.randomFailuresEnabled ? `${simulationState.config.failureFrequency}` : 'OFF'}
+                  </span>
+                </button>
+
+                {/* Repair All Machines Button */}
+                {activeFaultCount > 0 && (
+                  <button
+                    onClick={handleRepairAll}
+                    className="px-2.5 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/50 rounded-lg text-xs font-semibold flex items-center gap-1 transition animate-pulse"
+                    title="Clear all active equipment faults and return machines to nominal processing"
+                  >
+                    <Wrench className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Repair All</span>
+                  </button>
+                )}
+              </div>
+
               {/* Advance to Next Day Button */}
               <button
                 onClick={() => setSimulationState(prev => advanceToNextDay(prev))}
                 className="px-3.5 py-2.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-cyan-950/50 transition hover:scale-[1.02] active:scale-[0.98]"
-                title="Roll unfinished units into tomorrow's arrears, reset shift clock to 08:00 AM, and dispatch next truck delivery"
+                title="Roll unfinished units into tomorrow's arrears, resume backlog pieces from their exact positions, reset shift clock to 08:00 AM, and dispatch next truck delivery"
               >
                 <RotateCcw className="w-3.5 h-3.5 text-cyan-200" />
                 <span className="whitespace-nowrap">Advance to Next Day</span>
               </button>
             </div>
           </div>
+
+          {/* Failure Notification Toast */}
+          {failureNotification && (
+            <div className="mt-2.5 px-4 py-2 bg-gradient-to-r from-amber-950/90 via-slate-900 to-slate-900 border border-amber-500/50 rounded-xl text-xs text-amber-200 flex items-center justify-between shadow-xl animate-in fade-in slide-in-from-top-1">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="font-medium">{failureNotification}</span>
+              </div>
+              <button
+                onClick={() => setFailureNotification(null)}
+                className="text-slate-400 hover:text-white ml-2 text-xs font-bold px-1.5 py-0.5 rounded hover:bg-slate-800"
+              >
+                ✕
+              </button>
+            </div>
+          )}
         </section>
 
         {/* Real-Time Animated Factory Floor Canvas */}
@@ -829,6 +993,7 @@ export default function App() {
         onClose={() => setSelectedStationId(null)}
         onInjectFault={handleInjectFault}
         onRepair={handleRepair}
+        onToggleManualStop={handleToggleManualStop}
         onOpenQCSubsystem={id => {
           setSelectedQCId(id);
           setIsQCModalOpen(true);
@@ -844,6 +1009,14 @@ export default function App() {
         onSelectQCId={id => setSelectedQCId(id)}
       />
 
+      {/* Material Traceability & Excel CSV Export Modal */}
+      <MaterialTraceabilityModal
+        isOpen={isTraceabilityModalOpen}
+        onClose={() => setIsTraceabilityModalOpen(false)}
+        records={simulationState.itemLifecycleLedger || []}
+        currentDateStr={simulationState.config.simulatedDate}
+      />
+
       {/* Data Integration & ML Engineering Modal */}
       <DataIntegrationGuideModal
         isOpen={isGuideOpen}
@@ -857,6 +1030,8 @@ export default function App() {
         onClose={() => setIsConfigModalOpen(false)}
         config={simulationState.config}
         onSaveConfig={handleSaveConfig}
+        onTriggerRandomFailure={handleRandomizeFailure}
+        onRepairAll={handleRepairAll}
       />
     </div>
   );

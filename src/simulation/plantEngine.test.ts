@@ -5,11 +5,18 @@ import {
   tickSimulation,
   injectPlantFault,
   performStationMaintenance,
+  toggleStationManualStop,
   updatePlantOperationalConfig,
   advanceToNextDay,
+  triggerRandomMachineFailure,
+  clearAllStationFaults,
   INITIAL_STATION_METAS,
   DOWNSTREAM_FLOW,
 } from './plantEngine';
+import {
+  createDefaultItemLifecycleLedger,
+  exportItemLifecycleToCSV,
+} from '../utils/traceabilityExport';
 
 test('Initial plant state creates all 28 stations with 4-metric tracking and subassembly removed', () => {
   const state = createInitialPlantState();
@@ -295,18 +302,24 @@ test('Transporter out is 45s, QC is 30s/180s, settings persist on reset, and eve
   assert.equal(customState.config.shiftDurationHours, 10);
   assert.equal(customState.config.shiftStartHour, 7.5);
   assert.equal(customState.config.humanCrewSize, 4);
-  assert.equal(customState.config.trucks.rm1.arrivalHour, 8.75);
+  // Simulate previous run that accumulated 312 arrears over multiple days
+  customState.config.arrearsUnits = 312;
+  customState.config.simulatedDayCount = 4;
+  customState.config.completedCumulative = 168;
 
   // Now simulate a reset while passing existing user configuration
   const resetState = createInitialPlantState(customState.config);
   
-  // Custom settings must be preserved!
+  // Custom operational settings must be preserved!
   assert.equal(resetState.config.shiftDurationHours, 10, 'Shift duration should persist on reset');
   assert.equal(resetState.config.shiftStartHour, 7.5, 'Shift start hour should persist on reset');
   assert.equal(resetState.config.humanCrewSize, 4, 'Crew size should persist on reset');
   assert.equal(resetState.config.trucks.rm1.arrivalHour, 8.75, 'Truck schedule should persist on reset');
 
-  // Daily counters must be freshly reset
+  // Arrears backlog and runtime progress counters must be freshly reset to 0 and Day 1
+  assert.equal(resetState.config.arrearsUnits, 0, 'Arrears backlog must reset to 0 on restart/reset, never stuck at 312');
+  assert.equal(resetState.config.simulatedDayCount, 1, 'Simulated day count must reset to 1');
+  assert.equal(resetState.config.completedCumulative, 0, 'Cumulative completed count must reset to 0');
   assert.equal(resetState.completedCount, 0, 'Completed count must reset to 0');
   assert.equal(resetState.config.trucks.rm1.unitsLeftToUnload, 120, 'Units left to unload must reset to 120 on restart');
   assert.equal(resetState.config.trucks.rm1.hasArrived, false, 'hasArrived must reset to false on restart');
@@ -367,4 +380,421 @@ test('7-Day Performance History initializes 7 days of simulation data and update
   // Arrears should be (120 - 42) = 78 units
   assert.equal(activeDay2.arrearsBacklog, 78);
 });
+
+test('Conveyor times default to lathe: 360s, milling: 240s, shaping: 210s and can be customized by the user', () => {
+  const initial = createInitialPlantState();
+  assert.equal(initial.stations['transporter_rm1'].nominalProcessingTime, 360, 'Conveyor for lathe must default to 360s');
+  assert.equal(initial.stations['transporter_rm2'].nominalProcessingTime, 240, 'Conveyor for milling must default to 240s');
+  assert.equal(initial.stations['transporter_rm3'].nominalProcessingTime, 210, 'Conveyor for shaping must default to 210s');
+  assert.equal(initial.config.conveyorLatheTimeSeconds, 360);
+  assert.equal(initial.config.conveyorMillingTimeSeconds, 240);
+  assert.equal(initial.config.conveyorShapingTimeSeconds, 210);
+
+  // User customizes conveyor times
+  const custom = updatePlantOperationalConfig(initial, {
+    conveyorLatheTimeSeconds: 400,
+    conveyorMillingTimeSeconds: 260,
+    conveyorShapingTimeSeconds: 180,
+  });
+
+  assert.equal(custom.stations['transporter_rm1'].nominalProcessingTime, 400);
+  assert.equal(custom.stations['transporter_rm2'].nominalProcessingTime, 260);
+  assert.equal(custom.stations['transporter_rm3'].nominalProcessingTime, 180);
+});
+
+test('No unnecessary entity block dispatched to conveyor while CNC machine is already processing an entity', () => {
+  let state = createInitialPlantState();
+  // Simulate entity already inside CNC lathe
+  state.stations['cnc_lathe'].currentProcessingEntityId = 'ent_busy_1';
+  state.stations['cnc_lathe'].processingTimeRemaining = 300;
+  state.stations['cnc_lathe'].status = 'BUSY';
+  state.stations['inventory_rm1'].currentQueueCount = 5;
+
+  state.entities.push({
+    id: 'ent_busy_1',
+    code: 'RM1-busy',
+    type: 'RM1_BILLET',
+    line: 'RM1',
+    currentStationId: 'cnc_lathe',
+    targetStationId: 'buffer_rm1',
+    positionRatio: 0,
+    isProcessing: true,
+    qualityPassed: true,
+    creationTime: 0,
+    totalCycleTime: 60,
+  });
+
+  state.entities.push({
+    id: 'ent_inv_2',
+    code: 'RM1-inv',
+    type: 'RM1_BILLET',
+    line: 'RM1',
+    currentStationId: 'inventory_rm1',
+    targetStationId: 'transporter_rm1',
+    positionRatio: 0,
+    isProcessing: false,
+    qualityPassed: true,
+    creationTime: 0,
+    totalCycleTime: 0,
+  });
+
+  // Tick simulation
+  state = tickSimulation(state, 1.0);
+
+  // The queued item must remain in inventory and NOT be dispatched onto the conveyor while CNC is occupied
+  const itemsOnConveyor = state.entities.filter(e => e.currentStationId === 'transporter_rm1');
+  assert.equal(itemsOnConveyor.length, 0, 'No entity should be dispatched onto conveyor while CNC is busy');
+});
+
+test('Tool wear and RUL run in operating hours and do not cause machines to get out of order in the same day', () => {
+  let state = createInitialPlantState();
+  const lathe = state.stations['cnc_lathe'];
+  const initialWear = lathe.sensors.toolWearIndex ?? 0.04;
+
+  // Simulate 3 hours of operation (10,800 simulated seconds)
+  state.simulationSpeed = 60;
+  for (let i = 0; i < 180; i++) {
+    state = tickSimulation(state, 1.0); // 60s per tick
+  }
+
+  const currentLathe = state.stations['cnc_lathe'];
+  const currentWear = currentLathe.sensors.toolWearIndex ?? 0.04;
+  
+  // Wear after 3 hours should only have increased by a tiny fraction of a millimeter (not hit 0.35mm failure!)
+  assert.ok(currentWear < 0.10, `Tool wear should remain low under 0.10mm, but was ${currentWear}`);
+  assert.notEqual(currentLathe.status, 'MAINTENANCE_REQUIRED', 'Machine must NOT get out of order in the same day under nominal operation');
+  assert.ok(currentLathe.mlResult.remainingUsefulLifeHours > 100, `RUL should be >100 hours, was ${currentLathe.mlResult.remainingUsefulLifeHours}`);
+});
+
+test('advanceToNextDay preserves all backlog entities at exact positions, stations, and processing state', () => {
+  let state = createInitialPlantState();
+
+  // Create WIP entities at various stations
+  state.entities = [
+    {
+      id: 'backlog_conveyor_1',
+      code: 'RM1-CONV',
+      type: 'RM1_BILLET',
+      line: 'RM1',
+      currentStationId: 'transporter_rm1',
+      targetStationId: 'cnc_lathe',
+      positionRatio: 0.65,
+      isProcessing: false,
+      qualityPassed: true,
+      creationTime: 100,
+      totalCycleTime: 200,
+    },
+    {
+      id: 'backlog_chuck_1',
+      code: 'RM2-CHUCK',
+      type: 'RM2_CASTING',
+      line: 'RM2',
+      currentStationId: 'cnc_milling',
+      targetStationId: 'buffer_rm2',
+      positionRatio: 0.0,
+      isProcessing: true,
+      qualityPassed: true,
+      creationTime: 120,
+      totalCycleTime: 300,
+    },
+    {
+      id: 'backlog_buffer_1',
+      code: 'RM3-BUF',
+      type: 'MACHINED_RM3',
+      line: 'RM3',
+      currentStationId: 'buffer_rm3',
+      targetStationId: 'qc_rm3',
+      positionRatio: 0.0,
+      isProcessing: false,
+      qualityPassed: true,
+      creationTime: 140,
+      totalCycleTime: 400,
+    },
+  ];
+
+  // Configure station state corresponding to these entities
+  state.stations['cnc_milling'].currentlyProcessingCount = 1;
+  state.stations['cnc_milling'].currentProcessingEntityId = 'backlog_chuck_1';
+  state.stations['cnc_milling'].processingTimeRemaining = 45.5;
+  state.stations['cnc_milling'].processedToday = 12;
+
+  state.stations['buffer_rm3'].currentQueueCount = 1;
+  state.stations['buffer_rm3'].processedToday = 8;
+
+  state.completedCount = 30;
+
+  // Advance to next day
+  const nextDay = advanceToNextDay(state);
+
+  // Day count must increment
+  assert.equal(nextDay.config.simulatedDayCount, 2);
+  assert.equal(nextDay.config.simulatedSecondsOfDay, 8 * 3600, 'Next day must start at 8:00 AM shift start');
+
+  // Completed count today resets, but daily target accounts for arrears
+  assert.equal(nextDay.completedCount, 0, 'Today finished goods resets to 0 for new day');
+  assert.equal(nextDay.config.arrearsUnits, state.config.dailyTargetUnits - 30, 'Unfinished target becomes arrears backlog (120 - 30 = 90)');
+
+  // Backlog entities must be completely preserved!
+  assert.equal(nextDay.entities.length, 3, 'All 3 WIP entities must be preserved into the new day');
+  
+  const convItem = nextDay.entities.find(e => e.id === 'backlog_conveyor_1');
+  assert.ok(convItem, 'Conveyor backlog item must exist');
+  assert.equal(convItem?.currentStationId, 'transporter_rm1');
+  assert.equal(convItem?.targetStationId, 'cnc_lathe');
+  assert.equal(convItem?.positionRatio, 0.65, 'Conveyor item must start exactly where left yesterday');
+
+  const chuckItem = nextDay.entities.find(e => e.id === 'backlog_chuck_1');
+  assert.ok(chuckItem, 'In-chuck item must exist');
+  assert.equal(chuckItem?.currentStationId, 'cnc_milling');
+  assert.equal(chuckItem?.isProcessing, true);
+
+  // Machine state must retain processing entity and queue
+  assert.equal(nextDay.stations['cnc_milling'].currentlyProcessingCount, 1);
+  assert.equal(nextDay.stations['cnc_milling'].currentProcessingEntityId, 'backlog_chuck_1');
+  assert.equal(nextDay.stations['cnc_milling'].processingTimeRemaining, 45.5);
+  assert.equal(nextDay.stations['cnc_milling'].processedToday, 0, 'Processed today counter resets for new day');
+
+  assert.equal(nextDay.stations['buffer_rm3'].currentQueueCount, 1);
+  assert.equal(nextDay.stations['buffer_rm3'].processedToday, 0);
+});
+
+test('Machine failure simulation can be randomized or repaired at user discretion', () => {
+  let state = createInitialPlantState();
+
+  // All machines initially nominal
+  for (const st of Object.values(state.stations)) {
+    assert.equal(st.activeFault, 'NONE');
+    assert.notEqual(st.status, 'MAINTENANCE_REQUIRED');
+  }
+
+  // User triggers random machine failure
+  const failRes = triggerRandomMachineFailure(state);
+  assert.ok(failRes, 'Should successfully trigger a random machine fault');
+  assert.ok(failRes?.stationId, 'Should return the afflicted station ID');
+  assert.notEqual(failRes?.fault, 'NONE', 'Fault must not be NONE');
+
+  const faultedStation = failRes!.state.stations[failRes!.stationId];
+  assert.equal(faultedStation.status, 'MAINTENANCE_REQUIRED');
+  assert.equal(faultedStation.activeFault, failRes!.fault);
+
+  // User repairs all machines at will
+  const repairedState = clearAllStationFaults(failRes!.state);
+  const clearedStation = repairedState.stations[failRes!.stationId];
+  assert.equal(clearedStation.activeFault, 'NONE');
+  assert.ok(clearedStation.status === 'STARVED' || clearedStation.status === 'IDLE');
+});
+
+test('Stochastic failure simulation respects user enable/disable switch and MTBF parameter', () => {
+  let state = createInitialPlantState();
+
+  // Disable random failures
+  state.config.randomFailuresEnabled = false;
+  state.config.simulatedSecondsOfDay = 9 * 3600; // shift open
+
+  // Advance many ticks; no machine should randomly fail
+  for (let i = 0; i < 50; i++) {
+    state = tickSimulation(state, 1.0);
+  }
+  const anyFault = Object.values(state.stations).some(s => s.activeFault !== 'NONE');
+  assert.equal(anyFault, false, 'No fault should occur when randomFailuresEnabled is false');
+
+  // Now enable random failures with aggressive MTBF (e.g. 0.001 hours)
+  state.config.randomFailuresEnabled = true;
+  state.config.mtbfHours = 0.001; // extremely low MTBF to guarantee stochastic trigger
+
+  // Tick simulation once; machine should trip with active fault
+  state = tickSimulation(state, 10.0);
+  const faultedStation = Object.values(state.stations).find(s => s.activeFault !== 'NONE');
+  assert.ok(faultedStation, 'Machine should fail stochastically with low MTBF');
+  assert.notEqual(faultedStation?.activeFault, 'NONE');
+});
+
+test('Conveyor operation terminates and entity movement halts when conveyor gets a fault', () => {
+  let state = createInitialPlantState();
+  const transId = 'transporter_rm1';
+
+  // Seed an entity on transporter_rm1
+  state.entities = [
+    {
+      id: 'entity_test_conveyor',
+      code: 'RM1-001',
+      type: 'RM1_BILLET',
+      line: 'RM1',
+      currentStationId: transId,
+      targetStationId: 'cnc_lathe',
+      positionRatio: 0.25,
+      isProcessing: false,
+      qualityPassed: true,
+      creationTime: 0,
+      totalCycleTime: 10,
+    },
+  ];
+
+  // Tick nominal: positionRatio should advance
+  state = tickSimulation(state, 2.0);
+  const posAfterNominal = state.entities[0].positionRatio;
+  assert.ok(posAfterNominal > 0.25, 'Entity should advance along conveyor when operating nominally');
+
+  // Now inject a fault onto the conveyor
+  state = injectPlantFault(state, transId, 'CONVEYOR_MOTOR_OVERLOAD');
+  assert.equal(state.stations[transId].activeFault, 'CONVEYOR_MOTOR_OVERLOAD');
+  assert.equal(state.stations[transId].status, 'MAINTENANCE_REQUIRED');
+
+  // Tick faulted conveyor: entity movement MUST be halted (operation terminates)
+  const posBeforeFaultTick = state.entities[0].positionRatio;
+  state = tickSimulation(state, 5.0);
+  const posAfterFaultTick = state.entities[0].positionRatio;
+  assert.equal(
+    posAfterFaultTick,
+    posBeforeFaultTick,
+    'Entity movement on conveyor must completely terminate when conveyor gets a fault'
+  );
+
+  // Upstream inventory should also NOT dispatch new entities onto the faulted conveyor
+  const itemsOnBeltBefore = state.entities.filter(e => e.currentStationId === transId).length;
+  state = tickSimulation(state, 1.0);
+  const itemsOnBeltAfter = state.entities.filter(e => e.currentStationId === transId).length;
+  assert.equal(
+    itemsOnBeltAfter,
+    itemsOnBeltBefore,
+    'Inventory must not dispatch onto faulted conveyor'
+  );
+
+  // Once conveyor is repaired, movement resumes
+  state = performStationMaintenance(state, transId);
+  assert.equal(state.stations[transId].activeFault, 'NONE');
+  state = tickSimulation(state, 2.0);
+  assert.ok(
+    state.entities[0].positionRatio > posAfterFaultTick,
+    'Entity movement resumes after conveyor repair'
+  );
+});
+
+test('User can manually stop and resume the operation of any component at discretion', () => {
+  let state = createInitialPlantState();
+  const latheId = 'cnc_lathe';
+
+  // Component is initially nominal
+  assert.equal(state.stations[latheId].isManuallyStopped, undefined);
+
+  // User manually stops the component
+  state = toggleStationManualStop(state, latheId);
+  assert.equal(state.stations[latheId].isManuallyStopped, true);
+  assert.equal(state.stations[latheId].status, 'MAINTENANCE_REQUIRED');
+
+  // Place entity in machine chuck
+  state.entities = [
+    {
+      id: 'entity_lathe_item',
+      code: 'RM1-002',
+      type: 'RM1_BILLET',
+      line: 'RM1',
+      currentStationId: latheId,
+      targetStationId: 'buffer_rm1',
+      positionRatio: 0,
+      isProcessing: true,
+      qualityPassed: true,
+      creationTime: 0,
+      totalCycleTime: 10,
+    },
+  ];
+  state.stations[latheId].currentProcessingEntityId = 'entity_lathe_item';
+  state.stations[latheId].processingTimeRemaining = 120.0;
+
+  // Tick simulation: because lathe is manually stopped, processingTimeRemaining must NOT decrement
+  state = tickSimulation(state, 5.0);
+  assert.equal(
+    state.stations[latheId].processingTimeRemaining,
+    120.0,
+    'Station processing must freeze when manually stopped'
+  );
+
+  // User resumes component
+  state = toggleStationManualStop(state, latheId);
+  assert.equal(state.stations[latheId].isManuallyStopped, false);
+  assert.equal(state.stations[latheId].status, 'BUSY');
+
+  // Tick simulation: processing resumes
+  state = tickSimulation(state, 5.0);
+  assert.ok(
+    state.stations[latheId].processingTimeRemaining < 120.0,
+    'Station processing resumes after being resumed'
+  );
+});
+
+test('QC Subsystem tracks defect scrap and rework audit records with exact RM ID and deviation margin', () => {
+  const state = createInitialPlantState();
+  const qc1 = state.stations['qc_rm1'];
+  assert.ok(qc1.qcSubsystem?.defectAuditLog, 'QC subsystem must have defectAuditLog');
+  assert.ok(qc1.qcSubsystem.defectAuditLog.length > 0, 'Initial defect audit log should not be empty');
+
+  // Verify fields on defect audit record
+  const rec = qc1.qcSubsystem.defectAuditLog[0];
+  assert.ok(rec.itemId.startsWith('RM1-'), `Expected RM1 item ID, got ${rec.itemId}`);
+  assert.ok(rec.deviationMargin.length > 0, 'Expected deviationMargin');
+  assert.ok(rec.standardValue.length > 0, 'Expected standardValue');
+  assert.ok(rec.action === 'SCRAPPED' || rec.action === 'REWORKED');
+});
+
+test('Material Step and Traceability ledger starts clean with 0 preloaded fake records and captures real-time dynamic steps', () => {
+  // 1. Initial plant state must start with an empty ledger (no fake preloaded RM1-001 or ASY-001)
+  const initial = createInitialPlantState();
+  assert.ok(Array.isArray(initial.itemLifecycleLedger), 'itemLifecycleLedger must be an array');
+  assert.equal(initial.itemLifecycleLedger.length, 0, 'Must have 0 preloaded fake records on fresh initialization');
+
+  // 2. Set truck arrival to 8.0 (8:00 AM) so trucks unload immediately
+  const config = {
+    ...initial.config,
+    simulatedSecondsOfDay: 8 * 3600, // 8:00 AM
+    trucks: {
+      ...initial.config.trucks,
+      rm1: { ...initial.config.trucks.rm1, arrivalHour: 8.0 },
+      rm2: { ...initial.config.trucks.rm2, arrivalHour: 8.0 },
+      rm3: { ...initial.config.trucks.rm3, arrivalHour: 8.0 },
+    },
+  };
+  let state = { ...initial, config };
+
+  // Step simulation forward through several seconds
+  // Trucks should arrive, unload, and spawn real-time records into the ledger
+  for (let i = 0; i < 20; i++) {
+    state = tickSimulation(state, 1.0);
+  }
+
+  assert.ok(state.itemLifecycleLedger, 'Ledger must exist after simulation ticks');
+  assert.ok(state.itemLifecycleLedger.length > 0, 'Ledger must dynamically capture real-time material records');
+
+  // Inspect the first recorded item
+  const firstItem = state.itemLifecycleLedger[state.itemLifecycleLedger.length - 1];
+  assert.ok(firstItem.itemId.startsWith('RM'), `Expected RM prefix, got ${firstItem.itemId}`);
+  assert.ok(firstItem.steps.length >= 2, 'Item must have unloading and inventory steps recorded');
+  assert.equal(firstItem.steps[0].status, 'COMPLETED');
+  assert.equal(firstItem.steps[firstItem.steps.length - 1].status, 'IN_PROGRESS');
+  assert.ok(firstItem.lotBatchId.includes('LOT-'), 'Must have valid lot batch identifier');
+});
+
+test('Real-time material lifecycle ledger exports RFC 4180 CSV with UTF-8 BOM and step details', () => {
+  const initial = createInitialPlantState();
+  const config = {
+    ...initial.config,
+    simulatedSecondsOfDay: 8 * 3600,
+    trucks: {
+      ...initial.config.trucks,
+      rm1: { ...initial.config.trucks.rm1, arrivalHour: 8.0 },
+    },
+  };
+  let state = { ...initial, config };
+
+  for (let i = 0; i < 15; i++) {
+    state = tickSimulation(state, 1.0);
+  }
+
+  const csv = exportItemLifecycleToCSV(state.itemLifecycleLedger || []);
+  assert.ok(csv.startsWith('\uFEFF'), 'CSV must start with UTF-8 BOM for Microsoft Excel');
+  assert.ok(csv.includes('"Material ID","Lot / Batch Number"'), 'CSV must include header row');
+  assert.ok(csv.includes('RM1-001'), 'CSV must contain tracked item ID');
+});
+
+
+
 

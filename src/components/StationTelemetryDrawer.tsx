@@ -20,6 +20,12 @@ import {
   TrendingUp,
   Cpu,
   Info,
+  Square,
+  Play,
+  Users,
+  HardHat,
+  Anchor,
+  FileText,
 } from 'lucide-react';
 
 interface StationTelemetryDrawerProps {
@@ -28,6 +34,7 @@ interface StationTelemetryDrawerProps {
   onClose: () => void;
   onInjectFault: (stationId: string, fault: FaultType) => void;
   onRepair: (stationId: string) => void;
+  onToggleManualStop?: (stationId: string) => void;
   onOpenQCSubsystem?: (stationId: string) => void;
 }
 
@@ -37,6 +44,7 @@ export const StationTelemetryDrawer: React.FC<StationTelemetryDrawerProps> = ({
   onClose,
   onInjectFault,
   onRepair,
+  onToggleManualStop,
   onOpenQCSubsystem,
 }) => {
   const [selectedSensorTab, setSelectedSensorTab] = useState<'all' | 'vibration' | 'temperature' | 'current' | 'acoustic'>('all');
@@ -125,17 +133,69 @@ export const StationTelemetryDrawer: React.FC<StationTelemetryDrawerProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={onClose}
-          className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
-          aria-label="Close telemetry drawer"
-        >
-          <X className="w-5 h-5" />
-        </button>
-      </div>
+          <div className="flex items-center gap-2">
+            {onToggleManualStop && (
+              <button
+                onClick={() => onToggleManualStop(station.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition shadow ${
+                  station.isManuallyStopped
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400/40'
+                    : 'bg-rose-700 hover:bg-rose-600 text-white border border-rose-500/40'
+                }`}
+                title={
+                  station.isManuallyStopped
+                    ? 'Resume operation for this component'
+                    : 'Stop this component immediately (Manual Operator E-Stop)'
+                }
+              >
+                {station.isManuallyStopped ? (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>Resume Component</span>
+                  </>
+                ) : (
+                  <>
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                    <span>Stop Component</span>
+                  </>
+                )}
+              </button>
+            )}
 
-      {/* Drawer Body (Scrollable) */}
-      <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            <button
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+              aria-label="Close telemetry drawer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Drawer Body (Scrollable) */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* Manually Stopped Notice */}
+          {station.isManuallyStopped && (
+            <div className="p-3 bg-rose-950/80 border border-rose-600 rounded-xl flex items-center justify-between text-xs text-rose-200 shadow-lg">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 animate-bounce" />
+                <div>
+                  <strong className="text-white block font-bold">COMPONENT MANUALLY STOPPED</strong>
+                  <p className="text-[11px] text-rose-300">
+                    Operation has been halted by the operator. Workpiece processing and conveyor transfer are frozen until resumed.
+                  </p>
+                </div>
+              </div>
+              {onToggleManualStop && (
+                <button
+                  onClick={() => onToggleManualStop(station.id)}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-xs shrink-0 transition"
+                >
+                  Resume Now
+                </button>
+              )}
+            </div>
+          )}
         {/* ENTITY TELEMETRY & WORK-IN-PROGRESS TRACKER */}
         <div className="bg-slate-900/90 border border-cyan-900/50 rounded-xl p-4 shadow-lg space-y-3">
           <div className="flex items-center justify-between border-b border-slate-800 pb-2">
@@ -233,6 +293,181 @@ export const StationTelemetryDrawer: React.FC<StationTelemetryDrawerProps> = ({
             )}
           </div>
         </div>
+
+        {/* TRUCK LOGISTICS & UNLOADING TELEMETRY (When clicked on Truck inflow or unloading block) */}
+        {isTruckOrUnload && (
+          <div className="bg-gradient-to-r from-blue-950/60 via-slate-900 to-slate-950 border border-blue-500/40 rounded-xl p-4 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-blue-900/50 pb-2.5">
+              <span className="text-xs font-bold text-blue-300 flex items-center gap-1.5 uppercase tracking-wide">
+                <Truck className="w-4 h-4 text-blue-400" />
+                Dock Logistics & Unloading Subsystem Telemetry
+              </span>
+              <span className="text-[10px] bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.5 rounded font-mono font-bold">
+                Berth Bay: {station.line === 'RM1' ? 'Bay 1 (Bar Stock)' : station.line === 'RM2' ? 'Bay 2 (Castings)' : 'Bay 3 (Gear Blanks)'}
+              </span>
+            </div>
+
+            {/* 1. Unloading Handling Equipment (Forklift vs Crane Gantry) */}
+            <div className="bg-slate-950/90 rounded-xl p-3 border border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between text-xs">
+                <div className="font-bold text-white flex items-center gap-1.5">
+                  <Anchor className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>
+                    {station.line === 'RM1'
+                      ? 'Overhead Gantry Hoist & Crane System (Class CMAA-D)'
+                      : 'Electric Counterbalance Forklift (Toyota Traigo 48V #04)'}
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold">
+                  Equipment Nominal
+                </span>
+              </div>
+
+              {station.line === 'RM1' ? (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                  <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Hoist Cable Tension</span>
+                    <strong className="text-cyan-300 font-mono text-xs">2,450 kgf</strong>
+                    <span className="text-[9px] text-slate-500 block">Rated: 5,000 kgf</span>
+                  </div>
+                  <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Gantry Traverse Speed</span>
+                    <strong className="text-emerald-300 font-mono text-xs">0.75 m/s</strong>
+                    <span className="text-[9px] text-slate-500 block">Variable VFD</span>
+                  </div>
+                  <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Motor Temp</span>
+                    <strong className="text-amber-300 font-mono text-xs">48.2 °C</strong>
+                    <span className="text-[9px] text-slate-500 block">Thermal limit 85°C</span>
+                  </div>
+                  <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Cable Fatigue Life</span>
+                    <strong className="text-purple-300 font-mono text-xs">94.8%</strong>
+                    <span className="text-[9px] text-slate-500 block">NDT Verified</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                  <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Hydraulic Pressure</span>
+                    <strong className="text-cyan-300 font-mono text-xs">148 bar</strong>
+                    <span className="text-[9px] text-slate-500 block">Spec: 140-160 bar</span>
+                  </div>
+                  <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Battery Charge</span>
+                    <strong className="text-emerald-300 font-mono text-xs">88% Li-Ion</strong>
+                    <span className="text-[9px] text-slate-500 block">Fast-charge dock</span>
+                  </div>
+                  <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Mast Tilt Angle</span>
+                    <strong className="text-amber-300 font-mono text-xs">+2.4° Rake</strong>
+                    <span className="text-[9px] text-slate-500 block">Pallet lock safe</span>
+                  </div>
+                  <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Dock Speed Telemetry</span>
+                    <strong className="text-purple-300 font-mono text-xs">5.2 km/h</strong>
+                    <span className="text-[9px] text-slate-500 block">Governed speed</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Dock Handling Personnel & Crew Details */}
+            <div className="bg-slate-950/90 rounded-xl p-3 border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <div className="font-bold text-white flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Dock Operations Crew & Rigging Personnel</span>
+                </div>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800">
+                  Crew Size: 3 Personnel
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Shift Supervisor</div>
+                  <div className="font-bold text-slate-200">Marcus Vance</div>
+                  <div className="text-[9px] text-cyan-400 font-mono mt-0.5">Cert: OSHA #4088-A</div>
+                </div>
+
+                <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Lead Equipment Operator</div>
+                  <div className="font-bold text-slate-200">
+                    {station.line === 'RM1' ? 'Leo Sterling (Crane Lead)' : 'T. Henderson (Forklift #4)'}
+                  </div>
+                  <div className="text-[9px] text-emerald-400 font-mono mt-0.5">Lic: Heavy ISO Class 4</div>
+                </div>
+
+                <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Safety & PPE Compliance</div>
+                  <div className="font-bold text-emerald-400 flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                    <span>100% Compliant</span>
+                  </div>
+                  <div className="text-[9px] text-slate-400 font-mono mt-0.5">Steel-Toe, Hardhat, Vis</div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/80">
+                <span>Crew Fatigue Index: <strong className="text-slate-200">12% (Rest Satisfactory)</strong></span>
+                <span>Active Shift Elapsed: <strong className="text-cyan-300">1.2h / 8.0h</strong></span>
+              </div>
+            </div>
+
+            {/* 3. Cargo Manifest & Metallurgy Telemetry */}
+            <div className="bg-slate-950/90 rounded-xl p-3 border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <div className="font-bold text-white flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Cargo Manifest & Metallurgical Lot Specification</span>
+                </div>
+                <span className="text-[10px] font-mono text-slate-400">
+                  BoL: #BOL-2026-AERO-772{station.line === 'RM1' ? '1' : station.line === 'RM2' ? '2' : '3'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                  <span className="text-slate-400 text-[10px] block">Alloy Material Grade</span>
+                  <strong className="text-white block font-sans">
+                    {station.line === 'RM1'
+                      ? 'Ti-6Al-4V Grade 5 (Aero Bar Stock)'
+                      : station.line === 'RM2'
+                      ? 'Cast A356-T6 Aluminum (Gearbox Housings)'
+                      : 'AISI 9310 Carburizing Alloy (Gear Blanks)'}
+                  </strong>
+                  <span className="text-[9px] text-cyan-400 font-mono">
+                    Heat Lot: #{station.line === 'RM1' ? 'TH-9021-B' : station.line === 'RM2' ? 'AL-4482-C' : 'ST-1189-X'}
+                  </span>
+                </div>
+
+                <div className="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                  <span className="text-slate-400 text-[10px] block">Trailer Payload Balance</span>
+                  <div className="flex justify-between items-baseline mt-0.5">
+                    <span className="text-emerald-400 font-bold font-mono">
+                      {station.processedToday} unloaded
+                    </span>
+                    <span className="text-slate-400 font-mono text-[10px]">
+                      {Math.max(0, 120 - station.processedToday)} left
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-950 rounded-full h-1.5 mt-1.5 overflow-hidden">
+                    <div
+                      className="bg-emerald-500 h-full rounded-full transition-all duration-300"
+                      style={{ width: `${Math.min(100, (station.processedToday / 120) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
+                <span>Arrival Adherence: <strong className="text-emerald-400">On-Time Berth (+8s variance)</strong></span>
+                <span>Dock Restraint: <strong className="text-cyan-300">Hydraulic Lip & Wheel Chock Interlocked</strong></span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* QC Subsystem Drill-Down Card (Only for Quality Control stations) */}
         {station.type === 'quality_control' && (
